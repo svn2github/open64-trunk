@@ -1,5 +1,9 @@
 /*
- * Copyright 2003, 2004, 2005 PathScale, Inc.  All Rights Reserved.
+ * Copyright (C) 2006, 2007. QLogic Corporation. All Rights Reserved.
+ */
+
+/*
+ * Copyright 2003, 2004, 2005, 2006 PathScale, Inc.  All Rights Reserved.
  */
 
 /*
@@ -88,7 +92,7 @@
 #include <cmplrs/host.h>		// for typedef string
 #include "ld_ipa_option.h"		// for "keep" macro
 #include "ipa_option.h"			// std. ipa options
-#include "ipo_tlog_utils.h"		// for Set_tlog_phase
+#include "ipo_tlog_utils.h"		// for Set_ipa_tlog_phase
 #include "ipa_main.h"			// for analysis phase driver
 #include "ipa_cg.h"			// call graph related stuff
 #include "ipo_const.h"			// for cprop routines
@@ -276,7 +280,7 @@ PU_Written (const IPA_GRAPH* cg, const IPA_NODE* node, const IP_FILE_HDR* fhdr)
 
     return IP_PROC_INFO_state (proc_info[node->Proc_Info_Index ()]) ==
 	IPA_WRITTEN;
-} // PU_Deleted
+} // PU_Written
 #endif // KEY
 
 // this is basically a post-order iteration of the call graph, with the
@@ -557,6 +561,10 @@ if(Get_Trace(TP_IPA, IPA_TRACE_TUNING_NEW))
 
 } // Inline_Call
 
+#ifdef KEY
+extern void IPO_Process_Icalls (IPA_NODE *);
+extern void IPA_update_ehinfo_in_pu (IPA_NODE *);
+#endif
 
 static IPA_NODE *
 IPO_Process_node (IPA_NODE* node, IPA_CALL_GRAPH* cg)
@@ -574,6 +582,15 @@ IPO_Process_node (IPA_NODE* node, IPA_CALL_GRAPH* cg)
   IP_READ_pu_infos (node->File_Header());
 
   IPA_NODE_CONTEXT context (node);	// switch to this node's context
+
+#ifdef KEY
+  if (PU_src_lang (node->Get_PU()) & PU_CXX_LANG)
+    IPA_update_ehinfo_in_pu (node);
+
+  if (IPA_Enable_Icall_Opt && node->Has_Pending_Icalls()) {
+    IPO_Process_Icalls (node);
+  }
+#endif
 
   if (IPA_Enable_Padding) {
     IPO_Pad_Whirl (node);
@@ -907,7 +924,8 @@ Perform_Transformation (IPA_NODE* caller, IPA_CALL_GRAPH* cg)
 		    IPA_LNO_Map_Node(callee, IPA_LNO_Summary);
 #ifdef KEY
 		if (IPA_Enable_PU_Reorder == REORDER_DISABLE && 
-		    !Opt_Options_Inconsistent)
+		    !Opt_Options_Inconsistent &&
+		    !IPA_Enable_Source_PU_Order)
 		{
 #endif // KEY
 		IPA_Rename_Builtins(callee);
@@ -975,7 +993,8 @@ Perform_Transformation (IPA_NODE* caller, IPA_CALL_GRAPH* cg)
 		IPA_LNO_Map_Node(caller, IPA_LNO_Summary);
 #ifdef KEY
 	    if (IPA_Enable_PU_Reorder == REORDER_DISABLE && 
-	        !Opt_Options_Inconsistent)
+	        !Opt_Options_Inconsistent &&
+	        !IPA_Enable_Source_PU_Order)
 	    {
 #endif // KEY
 	    IPA_Rename_Builtins(caller);
@@ -1578,10 +1597,29 @@ struct order_node_by_freq {
     }
 };
 
+// This operator ensures that PUs are emitted after IPA in the same order
+// as in the original source code. This has two parts:
+//   * sort PUs by file-id
+//   * sort PUs with same file-id by their order in source code
 struct order_node_by_file_id {
     bool operator() (IPA_NODE * first, IPA_NODE * second)
     {
-    	return first->File_Id() < second->File_Id();
+      // (bug 11837) Fortran alternate-entry points do not get their
+      // own pu_info, so their file_id will be -1 (uninitialized). We
+      // also do not bother because they will never be emitted
+      // separately, but as part of the containing procedure. If we do
+      // want to get their file_id, we could access a pu_info in the
+      // same file through IPA_NODE::File_Header().pu_list, and get
+      // its file_id.
+      //
+      // same file, use source code order
+      if (first->File_Id() == second->File_Id() &&
+          first->File_Id() != -1 /* not a Fortran alt-entry point */)
+        return PU_Info_subsect_offset(first->PU_Info(), WT_TREE) >
+               PU_Info_subsect_offset(second->PU_Info(), WT_TREE);
+
+      // use order in which files were originally compiled
+      return first->File_Id() > second->File_Id();
     }
 };
 static void
@@ -1685,6 +1723,11 @@ check_for_nested_PU (IPA_NODE * node)
       while (child)
       {
 	IPA_NODE * child_node = Get_Node_From_PU (child);
+	if (child_node == NULL)
+	{ // bug 11647: the node may have been deleted by DFE.
+	  child = PU_Info_next (child);
+	  continue;
+	}
 #ifdef Is_True_On
 	int lexical_level = PU_lexical_level (child_node->Func_ST());
 	Is_True (lexical_level > GLOBAL_SYMTAB+1, 
@@ -1772,7 +1815,7 @@ IPO_main (IPA_CALL_GRAPH* cg)
 
 #ifdef KEY
     { // PU reordering heuristics
-      if (Opt_Options_Inconsistent)
+      if (IPA_Enable_Source_PU_Order || Opt_Options_Inconsistent)
       { // We cannot do any PU-reordering
       	priority_queue<IPA_NODE*, vector<IPA_NODE*>, order_node_by_file_id> emit_order;
     	for (IPA_NODE_VECTOR::iterator first = walk_order.begin ();
@@ -1983,7 +2026,7 @@ Perform_Interprocedural_Optimization (void)
     }
   }
 
-  Set_tlog_phase(PHASE_IPA);
+  Set_ipa_tlog_phase(PHASE_IPA);
 
   if (IPA_Enable_ipacom) {
     ipa_compile_init ();

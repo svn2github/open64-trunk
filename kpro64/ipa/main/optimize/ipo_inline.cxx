@@ -1,5 +1,9 @@
 /*
- * Copyright 2003, 2004, 2005 PathScale, Inc.  All Rights Reserved.
+ * Copyright (C) 2006. QLogic Corporation. All Rights Reserved.
+ */
+
+/*
+ * Copyright 2003, 2004, 2005, 2006 PathScale, Inc.  All Rights Reserved.
  */
 
 /*
@@ -910,6 +914,29 @@ IPO_INLINE::SubstituteFormal (ST* formal, WN* actual, INT position)
 #endif
 }
 
+#ifdef KEY // taken from wn_mp.cxx
+static const char * const dope_str_prefix = ".dope." ;
+static const INT dope_str_prefix_len = 6;
+                                                                                
+BOOL
+ST_Has_Dope_Vector(const ST *st) {
+  if (ST_class(st) != CLASS_VAR)
+    return FALSE;
+                                                                                
+  if ( TY_is_f90_pointer(ST_type(st)) )
+    return TRUE;
+                                                                                
+  TY_IDX ty = ST_type(st);
+  while (TY_kind(ty) == KIND_POINTER)
+    ty = TY_pointed(ty);
+                                                                                
+  if (TY_kind(ty) == KIND_STRUCT &&
+      strncmp(TY_name(ty), dope_str_prefix, dope_str_prefix_len) == 0)
+    return TRUE;
+                                                                                
+  return FALSE;
+}
+#endif
 
 static BOOL
 ST_might_be_modified (const ST* st)
@@ -926,6 +953,11 @@ ST_might_be_modified (const ST* st)
 	    !ST_has_nested_ref (st))
 	    return FALSE;
     }
+
+#ifdef KEY // bug 7871
+    if (ST_Has_Dope_Vector (st)) return FALSE;
+#endif
+
     return TRUE;
 } // ST_might_be_modified
 
@@ -2107,10 +2139,11 @@ IPO_INLINE::Process_Op_Code (TREE_ITER& iter, IPO_INLINE_AUX& aux)
 	    {
     		ST_IDX i = WN_st_idx (wn);
 		char * func_name = ST_name (St_Table[i]);
-		FmtAssert (func_name && 
+		Is_True (func_name && 
 			   (!strcmp (func_name, "_Unwind_Resume") || 
 			    !strcmp (func_name, "__cxa_call_unexpected") || 
-			    !strcmp (func_name, "__cxa_begin_catch")), 
+			    !strcmp (func_name, "__cxa_begin_catch") ||
+			    !strcmp (func_name, "__cxa_get_exception_ptr")), 
 			   ("Function %s has one-per-pu paramter", func_name));
 	    	// Fixup parameter
 	    	INITV_IDX exc_ptr = INITO_val ((INITO_IDX) Get_Current_PU ().unused);

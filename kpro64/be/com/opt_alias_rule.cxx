@@ -1,5 +1,9 @@
 /*
- * Copyright 2004 PathScale, Inc.  All Rights Reserved.
+ *  Copyright (C) 2006. QLogic Corporation. All Rights Reserved.
+ */
+
+/*
+ * Copyright 2004, 2005, 2006 PathScale, Inc.  All Rights Reserved.
  */
 
 /*
@@ -62,7 +66,7 @@
 #pragma hdrstop
 #ifdef _KEEP_RCS_ID
 #define opt_alias_rule_CXX	"opt_alias_rule.cxx"
-static char *rcs_id = 	opt_alias_rule_CXX"$Revision: 1.1.1.1 $";
+static char *rcs_id = 	opt_alias_rule_CXX"$Revision: 1.8 $";
 #endif /* _KEEP_RCS_ID */
 
 #include "defs.h"
@@ -192,7 +196,7 @@ ALIAS_RULE::Ty1_Include_Ty2 (TY_IDX ty1, TY_IDX ty2) const
     if (TY_kind(field_ty) == KIND_STRUCT && Ty1_Include_Ty2 (field_ty, ty2)) {
         return TRUE;
     }
-  } while (!FLD_last_field(iter++));
+  } while (!FLD_last_field (iter++));
 
   return FALSE;
 }
@@ -310,7 +314,7 @@ BOOL ALIAS_RULE::Aliased_Indirect_Rule
 	    }
           }
         }
-      }
+      } /* end of if(low->Byte_Ofst()... )*/
     }
   }
 
@@ -423,6 +427,31 @@ struct TY_IDX_EQ
 
 static hash_map<const TY_IDX, INT, __gnu_cxx::hash<TY_IDX>, TY_IDX_EQ> Stripped_mtype;
 #endif
+
+#ifdef TARG_X8664
+#define I1_VECTOR_TYPES    case MTYPE_V16I1: \
+                           case MTYPE_V8I1:  \
+                           case MTYPE_M8I1:
+#define I2_VECTOR_TYPES    case MTYPE_V16I2: \
+                           case MTYPE_V8I2:  \
+                           case MTYPE_M8I2:
+#define I4_VECTOR_TYPES    case MTYPE_V16I4: \
+                           case MTYPE_V8I4:  \
+                           case MTYPE_M8I4:
+#define I8_VECTOR_TYPES    case MTYPE_V16I8:
+#define F4_VECTOR_TYPES    case MTYPE_V16F4: \
+                           case MTYPE_V8F4:  \
+                           case MTYPE_M8F4:
+#define F8_VECTOR_TYPES    case MTYPE_V16F8:
+#else
+#define I1_VECTOR_TYPES
+#define I2_VECTOR_TYPES
+#define I4_VECTOR_TYPES
+#define I8_VECTOR_TYPES
+#define F4_VECTOR_TYPES
+#define F8_VECTOR_TYPES
+#endif  // TARG_X8664
+
 // Implement C.1.  See opt_ailas_rule.h
 //
 //  Strip off qualifiers, signed-ness.
@@ -448,16 +477,22 @@ INT32 ALIAS_RULE::Get_stripped_mtype(TY_IDX ty_idx) const
       TYPE_ID mtype = TY_mtype(ty);
 #ifdef KEY
       switch (mtype) {
+      I1_VECTOR_TYPES
       case MTYPE_I1:
 	ret_type = (1 << MTYPE_U1); break;
+      I2_VECTOR_TYPES
       case MTYPE_I2:
 	ret_type = (1 << MTYPE_U2); break;
+      I4_VECTOR_TYPES
       case MTYPE_I4:
 	ret_type = (1 << MTYPE_U4); break;
+      I8_VECTOR_TYPES
       case MTYPE_I8:
 	ret_type = (1 << MTYPE_U8); break;
+      F4_VECTOR_TYPES
       case MTYPE_C4:
 	ret_type = (1 << MTYPE_F4); break;
+      F8_VECTOR_TYPES
       case MTYPE_C8:
 	ret_type = (1 << MTYPE_F8); break;
       case MTYPE_CQ:
@@ -497,7 +532,7 @@ INT32 ALIAS_RULE::Get_stripped_mtype(TY_IDX ty_idx) const
     break;
   case KIND_STRUCT:  // Collect the basic types of a structure recursively.
     if (!TY_fld (ty).Is_Null ()) {
-#ifdef KEY
+#ifdef KEY // bug 3974: return cached type
       if (INT32 stripped_type = /* assign */ Stripped_mtype[ty_idx])
 	return stripped_type;
 #endif
@@ -506,6 +541,9 @@ INT32 ALIAS_RULE::Get_stripped_mtype(TY_IDX ty_idx) const
 	ret_type |= Get_stripped_mtype (FLD_type (fld_iter));
       } while (!FLD_last_field (fld_iter++));
     }
+#ifdef KEY // bug 9580: empty structs should alias between themselves.
+    else ret_type = (1 << MTYPE_M);
+#endif
     break;
   case KIND_FUNCTION:  
     // KIND_FUNCTION are allowed because LDA func_st might be
@@ -536,7 +574,7 @@ INT32 ALIAS_RULE::Get_stripped_mtype(TY_IDX ty_idx) const
       TY_no_ansi_alias(ty))		// varargs TY:  See PV 329475.
     ret_type = ALL_TYPE;
 
-#ifdef KEY
+#ifdef KEY // bug 3974: insert type in cache
   if (TY_kind(ty) == KIND_STRUCT && ret_type)
     Stripped_mtype[ty_idx] = ret_type;
 #endif
@@ -564,7 +602,6 @@ BOOL ALIAS_RULE::Aliased_ANSI_Type_Rule(const POINTS_TO *mem1,
   // The base and ofst rules are sufficient.
   if (mem1->Base_is_fixed() && mem2->Base_is_fixed())
     return TRUE;
-
 
   if (TY_kind(ty1) == KIND_STRUCT && TY_kind(ty2) == KIND_STRUCT) {
     if (!Ty1_Include_Ty2 (ty1, ty2) && !Ty1_Include_Ty2 (ty2, ty1)) 
@@ -602,16 +639,17 @@ BOOL ALIAS_RULE::Aliased_ANSI_Type_Rule(const POINTS_TO *mem1,
 
   // If both mem have same base, should be handled by offset rule.
   // Do not use ansi rule.
-  // However, if the base is not fixed, offset-rule does not help out)
   // Note: same_base may return FALSE for the same object if the object
+  // However, if the base is not fixed, offset-rule does not help out)
   // are passed in multiple times via distinct parameters.
   if (mem1->Same_base(mem2))
     return TRUE;
 
+
+
   //  Handle SCALAR, POINTER, STRUCT, CLASS, and ARRAY
   if ((Get_stripped_mtype(ty1) & Get_stripped_mtype(ty2)) == 0)
     return FALSE;
-
 
   return TRUE;
 }
@@ -647,12 +685,18 @@ BOOL ALIAS_RULE::Aliased_C_Qualifier_Rule(const POINTS_TO *mem1, const POINTS_TO
   //
   if (mem1->Based_sym() != NULL &&
       mem1->Restricted() && 
+#ifdef KEY // bug 9001: do not use this rule when Based_kind() == BASE_IS_FIXED
+      mem2->Based_sym() != NULL &&
+#endif
       mem1->Based_sym() != mem2->Based_sym() &&
       !mem2->Default_vsym())
     return FALSE;
 
   if (mem2->Based_sym() != NULL &&
       mem2->Restricted() && 
+#ifdef KEY // bug 9001: do not use this rule when Based_kind() == BASE_IS_FIXED
+      mem1->Based_sym() != NULL &&
+#endif
       mem2->Based_sym() != mem1->Based_sym() &&
       !mem1->Default_vsym())
     return FALSE;
@@ -823,7 +867,7 @@ BOOL ALIAS_RULE::Aliased_Memop_By_Declaration(const POINTS_TO *p1,
   if (Rule_enabled(IBM_DISJOINT_RULE) && !Aliased_Disjoint(p1, p2))
     return FALSE;
   
-  if (Rule_enabled(F90_TARGET_RULE) && !Aliased_F90_Target_Rule(p1, p2, ty1, ty2)) 
+  if (Rule_enabled(F90_TARGET_RULE) && !Aliased_F90_Target_Rule(p1, p2, ty1, ty2))
     return FALSE;
 
   return TRUE;

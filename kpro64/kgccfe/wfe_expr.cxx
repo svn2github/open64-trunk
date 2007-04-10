@@ -1,5 +1,9 @@
+/*
+ * Copyright (C) 2006. QLogic Corporation. All Rights Reserved.
+ */
+
 /* 
-   Copyright 2003, 2004, 2005 PathScale, Inc.  All Rights Reserved.
+   Copyright 2003, 2004, 2005, 2006 PathScale, Inc.  All Rights Reserved.
    File modified June 20, 2003 by PathScale, Inc. to update Open64 C/C++ 
    front-ends to GNU 3.2.2 release.
  */
@@ -49,6 +53,9 @@
 #include "defs.h"
 #include "glob.h"
 #include "config.h"
+#ifdef TARG_X8664
+#include "config_opt.h"
+#endif
 #include "wn.h"
 #include "wn_util.h"
 #include "targ_sim.h"
@@ -729,13 +736,23 @@ WFE_Array_Expr(tree exp,
     if (component_ty_idx == 0)
       ty_idx0 = Get_TY(TREE_TYPE(exp));
     else ty_idx0 = component_ty_idx;
+#ifdef KEY // bug 10728
+    if (TREE_THIS_VOLATILE(exp))
+      Set_TY_is_volatile(ty_idx0);
+#endif
     Is_True(! DECL_BIT_FIELD(arg1),
 	    ("WFE_Array_Expr: address arithmetic cannot use bitfield addresses"));
     INT64 ofst = (BITSPERBYTE * Get_Integer_Value(DECL_FIELD_OFFSET(arg1)) +
 				Get_Integer_Value(DECL_FIELD_BIT_OFFSET(arg1)))
 			      / BITSPERBYTE;
+#ifdef KEY // bug 9725: If the field is an array of struct, it is considered
+           // a single field.
+    return WFE_Array_Expr(arg0, ty_idx, ty_idx0, ofst + component_offset,
+			  DECL_FIELD_ID(arg1));
+#else
     return WFE_Array_Expr(arg0, ty_idx, ty_idx0, ofst + component_offset,
 			  field_id + DECL_FIELD_ID(arg1));
+#endif
   }
   else if (code == VAR_DECL || code == PARM_DECL) {
     ST *st = Get_ST (exp);
@@ -841,6 +858,10 @@ WFE_Array_Expr(tree exp,
       else
         wn1 = WN_Intconst(MTYPE_I4, 0);
       wn2 = WFE_Expand_Expr (TREE_OPERAND (exp, 1));
+#ifdef TARG_X8664 // bug 11705
+      if (WN_operator(wn2) == OPR_SUB)
+        WN_set_rtype(wn2, Mtype_TransferSign(MTYPE_I4, WN_rtype(wn2)));
+#endif
 #ifdef KEY
       // Expand the current dimension by growing the array just expanded.  Bug
       // 4692.
@@ -871,6 +892,10 @@ WFE_Array_Expr(tree exp,
       *ty_idx = TY_etype(ty_idx0);
       if (TY_align(ty_idx0) < TY_align(*ty_idx))
 	Set_TY_align(*ty_idx, TY_align(ty_idx0));// pick more stringent align
+#ifdef KEY // bug 10728
+      if (TREE_THIS_VOLATILE(exp))
+	Set_TY_is_volatile(*ty_idx);
+#endif
     }
     else *ty_idx = component_ty_idx;
     return wn;
@@ -944,6 +969,12 @@ WFE_Lhs_Of_Modify_Expr(tree_code assign_code,
 			    Get_Integer_Value(DECL_FIELD_BIT_OFFSET(arg1)))
 			  / BITSPERBYTE;
     else ofst = 0;
+#ifdef KEY    // bug 10422: check if the field is volatile
+    if (TREE_THIS_VOLATILE(arg1)) {
+      Set_TY_is_volatile(ty_idx0);
+      volt = TRUE;
+    }
+#endif
     wn = WFE_Lhs_Of_Modify_Expr(assign_code, arg0, need_result, ty_idx0, 
 				ofst+component_offset,
 			        field_id + DECL_FIELD_ID(arg1), is_bit_field, 
@@ -1009,6 +1040,17 @@ WFE_Lhs_Of_Modify_Expr(tree_code assign_code,
       rhs_wn = WN_CreateLdid (OPR_LDID, rtype,
 			      desc, rhs_preg_num, rhs_st,
 			      desc_ty_idx, 0);
+#ifdef KEY
+      // Bug 8056: Need to preserve the semantics on the preg if it's size
+      // is less than 4 bytes.
+      if (MTYPE_byte_size(desc) < 4) {
+
+         rhs_wn = WN_CreateCvtl(!MTYPE_signed(desc) ? OPC_U4CVTL : OPC_I4CVTL,
+                                MTYPE_bit_size(desc),
+                                rhs_wn);
+
+      }
+#endif
     }
     else {
       WN *result_wn;	// the result wn to be returned
@@ -1090,6 +1132,10 @@ WFE_Lhs_Of_Modify_Expr(tree_code assign_code,
       // ignore zero length structs
     }
     else {
+#ifdef KEY    // bug 10422: check if the field is volatile
+      if (volt) 
+	Set_TY_is_volatile(hi_ty_idx);
+#endif
       wn = WN_Stid (desc, ST_ofst(st) + component_offset + lhs_preg_num, st,
 		    hi_ty_idx, rhs_wn, field_id);
       WFE_Stmt_Append(wn, Get_Srcpos());
@@ -1133,6 +1179,13 @@ WFE_Lhs_Of_Modify_Expr(tree_code assign_code,
       ST       *preg_st;
       PREG_NUM  preg;
       TY_IDX    address_ty_idx = Get_TY (TREE_TYPE (TREE_OPERAND (lhs, 0)));
+#ifdef KEY 
+      // Bug 8738 : volatile type should NOT be for preg
+      if (TY_is_volatile(address_ty_idx)) {
+       Clear_TY_is_volatile(address_ty_idx);
+       volt = TRUE;
+      }
+#endif
       preg_st = MTYPE_To_PREG(Pointer_Mtype);
       preg    = Create_Preg (Pointer_Mtype, NULL);
       wn      = WN_Stid (Pointer_Mtype, preg, preg_st, address_ty_idx, addr_wn);
@@ -2075,6 +2128,7 @@ extern void construct_nesting ( struct nesting *,
 // mimic POPSTACK in gnu/stmt.c
 extern void popstack (struct nesting *);
 extern LABEL_IDX get_nesting_label (struct nesting *);
+extern struct nesting * wfe_get_matching_scope (struct nesting *);
 
 // process pragma statements, function definition in c-semantics.c
 extern void process_omp_stmt (tree);
@@ -2124,12 +2178,14 @@ WFE_target_builtins (tree exp, INTRINSIC * iopc, BOOL * intrinsic_op)
     case IX86_BUILTIN_PADDB:
     case IX86_BUILTIN_PADDW:
     case IX86_BUILTIN_PADDD:
+    case IX86_BUILTIN_ADDPD:
       wn = WN_Add (res_type, arg0, arg1);
       *intrinsic_op = FALSE;
       break;
     case IX86_BUILTIN_PSUBB:
     case IX86_BUILTIN_PSUBW:
     case IX86_BUILTIN_PSUBD:
+    case IX86_BUILTIN_SUBPD:
       wn = WN_Sub (res_type, arg0, arg1);
       *intrinsic_op = FALSE;
       break;
@@ -2313,7 +2369,7 @@ WFE_target_builtins (tree exp, INTRINSIC * iopc, BOOL * intrinsic_op)
 	    arg0 = arg1;
 	}
 
-	wn = WN_Create_Intrinsic (OPR_INTRINSIC_OP, MTYPE_V8I2, MTYPE_V,
+	wn = WN_Create_Intrinsic (OPR_INTRINSIC_OP, MTYPE_M8I2, MTYPE_V,
 	                          *iopc, 2, args);
         break;
       }
@@ -2468,12 +2524,6 @@ WFE_target_builtins (tree exp, INTRINSIC * iopc, BOOL * intrinsic_op)
       *iopc = INTRN_EMMS;
       *intrinsic_op = FALSE;
       break;
-    case IX86_BUILTIN_PADDQ:
-      *iopc = INTRN_PADDQ;
-      break;
-    case IX86_BUILTIN_PSUBQ:
-      *iopc = INTRN_PSUBQ;
-      break;
     case IX86_BUILTIN_LOADAPS:
       *iopc = INTRN_LOADAPS;
       break;
@@ -2481,15 +2531,229 @@ WFE_target_builtins (tree exp, INTRINSIC * iopc, BOOL * intrinsic_op)
       *iopc = INTRN_STOREAPS;
       *intrinsic_op = FALSE;
       break;
+    case IX86_BUILTIN_PXOR128:
+      wn = WN_Bxor (res_type, arg0, arg1);
+      *intrinsic_op = FALSE;
+      break;
+    case IX86_BUILTIN_PSLLDQI128:
+      *iopc = INTRN_PSLLDQ;
+      break;
+    case IX86_BUILTIN_PSRLDQI128:
+      *iopc = INTRN_PSRLDQ;
+      break;
+    case IX86_BUILTIN_PSLLW128:
+      *iopc = INTRN_PSLLW;
+      break;
+    case IX86_BUILTIN_PSLLD128:
+      *iopc = INTRN_PSLLD;
+      break;
+    case IX86_BUILTIN_PSLLQ128:
+      *iopc = INTRN_PSLLQ;
+      break;
+    case IX86_BUILTIN_PSRLW128:
+      *iopc = INTRN_PSRLW;
+      break;
+    case IX86_BUILTIN_PSRLD128:
+      *iopc = INTRN_PSRLD;
+      break;
+    case IX86_BUILTIN_PSRLQ128:
+      *iopc = INTRN_PSRLQ;
+      break;
+    case IX86_BUILTIN_PSRAW128:
+      *iopc = INTRN_PSRAW;
+      break;
+    case IX86_BUILTIN_PSRAD128:
+      *iopc = INTRN_PSRAD;
+      break;
+    case IX86_BUILTIN_PSRAWI128:
+      *iopc = INTRN_PSRAW;
+      break;
+    case IX86_BUILTIN_PSRADI128:
+      *iopc = INTRN_PSRAD;
+      break;
+    case IX86_BUILTIN_PSLLWI128:
+      *iopc = INTRN_PSLLW;
+      break;
+    case IX86_BUILTIN_PSLLDI128:
+      *iopc = INTRN_PSLLD;
+      break;
+    case IX86_BUILTIN_PSLLQI128:
+      *iopc = INTRN_PSLLQ;
+      break;
+    case IX86_BUILTIN_PSRLWI128:
+      *iopc = INTRN_PSRLW;
+      break;
+    case IX86_BUILTIN_PSRLDI128:
+      *iopc = INTRN_PSRLD;
+      break;
+    case IX86_BUILTIN_PSRLQI128:
+      *iopc = INTRN_PSRLQ;
+      break;
+    case IX86_BUILTIN_MOVNTDQ:
+      *iopc = INTRN_MOVNTDQ;
+      *intrinsic_op = FALSE;
+      break;
+    case IX86_BUILTIN_LOADD:
+      *iopc = INTRN_LOADD;
+      break;
+    case IX86_BUILTIN_MOVNTPS:
+      *iopc = INTRN_MOVNTPS;
+      *intrinsic_op = FALSE;
+      break;
+    case IX86_BUILTIN_SSE_ZERO:
+      *iopc = INTRN_SSE_ZERO;
+      *intrinsic_op = FALSE;
+      break;
+    case IX86_BUILTIN_CLRTI:
+      *iopc = INTRN_CLRTI;
+      *intrinsic_op = FALSE;
+      break;
+    case IX86_BUILTIN_PSHUFD:
+      *iopc = INTRN_PSHUFD;
+      break;
+    case IX86_BUILTIN_LOADSS:
+      *iopc = INTRN_LOADSS;
+      break;
+    case IX86_BUILTIN_DIVPD:
+      wn = WN_Div (res_type, arg0, arg1);
+      *intrinsic_op = FALSE;
+      break;
+    case IX86_BUILTIN_MULPD:
+      wn = WN_Mpy (res_type, arg0, arg1);
+      *intrinsic_op = FALSE;
+      break;
+    case IX86_BUILTIN_SQRTPD:
+      wn = WN_Sqrt (res_type, arg0);
+      *intrinsic_op = FALSE;
+      break;
+    case IX86_BUILTIN_MINPD:
+      wn = WN_Binary (OPR_MIN, res_type, arg0, arg1);
+      *intrinsic_op = FALSE;
+      break;
+    case IX86_BUILTIN_MAXPD:
+      wn = WN_Binary (OPR_MAX, res_type, arg0, arg1);
+      *intrinsic_op = FALSE;
+      break;
+    case IX86_BUILTIN_SHUFPD:
+      *iopc = INTRN_SHUFPD;
+      break;
+    case IX86_BUILTIN_XORPD:
+      *iopc = INTRN_XORPD;
+      break;
+    case IX86_BUILTIN_ANDPD:
+      *iopc = INTRN_ANDPD;
+      break;
+    case IX86_BUILTIN_ORPD:
+      *iopc = INTRN_ORPD;
+      break;
+    case IX86_BUILTIN_STORELPD:
+      *iopc = INTRN_STORELPD;
+      *intrinsic_op = FALSE;
+      break;
+    case IX86_BUILTIN_STOREHPD:
+      *iopc = INTRN_STOREHPD;
+      *intrinsic_op = FALSE;
+      break;
+    case IX86_BUILTIN_LOADLPD:
+      *iopc = INTRN_LOADLPD;
+      break;
+    case IX86_BUILTIN_LOADHPD:
+      *iopc = INTRN_LOADHPD;
+      break;
+    case IX86_BUILTIN_UNPCKLPD:
+      *iopc = INTRN_UNPCKLPD;
+      break;
+    case IX86_BUILTIN_UNPCKHPD:
+      *iopc = INTRN_UNPCKHPD;
+      break;
+    case IX86_BUILTIN_LFENCE:
+      *iopc = INTRN_LFENCE;
+      *intrinsic_op = FALSE;
+      break;
+    case IX86_BUILTIN_MFENCE:
+      *iopc = INTRN_MFENCE;
+      *intrinsic_op = FALSE;
+      break;
+    case IX86_BUILTIN_SFENCE:
+      *iopc = INTRN_SFENCE;
+      *intrinsic_op = FALSE;
+      break;
+    case IX86_BUILTIN_PSHUFW:
+      *iopc = INTRN_PSHUFW;
+      break;
+    case IX86_BUILTIN_LOADDQA:
+      *iopc = INTRN_LOADDQA;
+      break;
+    case IX86_BUILTIN_LOADDQU:
+      *iopc = INTRN_LOADDQU;
+      break;
+    case IX86_BUILTIN_STOREDQA:
+      *iopc = INTRN_STOREDQA;
+      *intrinsic_op = FALSE;
+      break;
+    case IX86_BUILTIN_STOREDQU:
+      *iopc = INTRN_STOREDQU;
+      *intrinsic_op = FALSE;
+      break;
+
     default:
-      *iopc = INTRN_UNIMP_PURE;
-      if (res_type == MTYPE_V)
+      if (Opt_Level > 0)
+      { // Don't assert in front-end. If used, backend will assert.
+        *iopc = INTRN_UNIMP_PURE;
+        if (res_type == MTYPE_V)
+        {
+          *iopc = INTRN_UNIMP;
+          *intrinsic_op = FALSE;
+        }
+      }
+      else
       {
-	*iopc = INTRN_UNIMP;
         *intrinsic_op = FALSE;
+        // For simplicity, generate a U8 constant, and then use a cvt
+        // if necessary. If void result type, generate a placeholder eval.
+        wn = WN_Intconst (MTYPE_U8, 0);
+        if (res_type != MTYPE_U8 && res_type != MTYPE_V)
+          wn = WN_Cvt (MTYPE_U8, res_type, wn);
       }
       break;
   }
+
+  // The following instructions expect both arguments as FP (xmm), but
+  // the 2nd argument type for the corresponding builtin is INT, so we
+  // need to insert a CVT here.
+  switch (ins_code)
+  {
+    case IX86_BUILTIN_PSRAWI128:
+    case IX86_BUILTIN_PSRADI128:
+    case IX86_BUILTIN_PSLLWI128:
+    case IX86_BUILTIN_PSLLDI128:
+    case IX86_BUILTIN_PSLLQI128:
+    case IX86_BUILTIN_PSRLWI128:
+    case IX86_BUILTIN_PSRLDI128:
+    case IX86_BUILTIN_PSRLQI128:
+      Is_True (wn == NULL, ("WFE_target_builtins: null WN expected"));
+      WN * args[2];
+      //for (int c=0; c<2; c++)
+      {
+        // 1st argument
+        TY_IDX arg_ty_idx = Get_TY (TREE_TYPE (TREE_VALUE (t_list)));
+        TYPE_ID arg_mtype = TY_mtype (arg_ty_idx);
+        args[0] = WN_CreateParm (Mtype_comparison (arg_mtype), arg0,
+                                 arg_ty_idx, WN_PARM_BY_VALUE);
+
+        // 2nd argument
+        arg1 = WN_Cvt (WN_rtype(arg1), MTYPE_V16I8, arg1);
+        arg_ty_idx = MTYPE_TO_TY_array[WN_rtype (arg1)];
+        arg_mtype = WN_rtype (arg1);
+        args[1] = WN_CreateParm (Mtype_comparison (arg_mtype), arg1,
+                                 arg_ty_idx, WN_PARM_BY_VALUE);
+      }
+
+      wn = WN_Create_Intrinsic (OPR_INTRINSIC_OP, res_type, MTYPE_V,
+                                *iopc, 2, args);
+      break;
+  }
+
   return wn;
 }
 #endif // TARG_X8664
@@ -2571,7 +2835,7 @@ WFE_Expand_Expr (tree exp,
 	    {
               TCON tcon;
               tcon = Host_To_Targ_String (MTYPE_STRING,
-                                          TREE_STRING_POINTER(arg0),
+                                          const_cast<char *>TREE_STRING_POINTER(arg0),
                                           TREE_STRING_LENGTH(arg0));
               ty_idx = Get_TY(TREE_TYPE(arg0));
               st = New_Const_Sym (Enter_tcon (tcon), ty_idx);
@@ -2630,6 +2894,8 @@ WFE_Expand_Expr (tree exp,
 #ifdef KEY // bug 3228
 	  case ARRAY_REF:
 	    wn = WFE_Expand_Expr (arg0);
+	    if (WN_operator(wn) == OPR_ILOAD) // bug 10105
+	      wn = WN_kid0(wn);
 	    ty_idx = Get_TY(TREE_TYPE(arg0));
 	    break;
 #endif
@@ -2651,6 +2917,77 @@ WFE_Expand_Expr (tree exp,
 	        wn = WN_Lda (Pointer_Mtype, ST_ofst(st), st);
 	    }
 	    break;
+	  
+	  case REALPART_EXPR: // bug 10103
+	    {
+	      wn = WFE_Expand_Expr (TREE_OPERAND (arg0, 0));
+	      if (WN_operator (wn) == OPR_ILOAD)
+		wn = WN_kid0 (wn);
+	      else if (WN_operator (wn) == OPR_LDID)
+		wn = WN_Lda (Pointer_Mtype, WN_offset(wn), WN_st(wn));
+	      else Fail_FmtAssertion ("WFE_Expand_Expr: NYI for REALPART_EXPR");
+	    }
+	    break;
+
+	  case IMAGPART_EXPR:
+	  {
+	    wn = WFE_Expand_Expr (TREE_OPERAND (arg0, 0));
+	    if (WN_operator (wn) == OPR_ILOAD)
+	    {
+	      wn0 = WN_kid0 (wn);
+	      TYPE_ID imag_mtype;
+	      switch (WN_rtype (wn))
+	      {
+		case MTYPE_C4:
+		  imag_mtype = MTYPE_F4;
+		  break;
+		case MTYPE_C8:
+		  imag_mtype = MTYPE_F8;
+		  break;
+		case MTYPE_CQ:
+		  imag_mtype = MTYPE_FQ;
+		  break;
+		default:
+		  Fail_FmtAssertion ("WFE_Expand_Expr: Unexpected rtype in IMAGPART_EXPR");
+	      }
+	      INT ofst;
+	      if (imag_mtype == MTYPE_FQ)
+	      {
+#ifdef TARG_X8664
+		if (Is_Target_32bit()) ofst = 12; else
+#endif // TARG_X8664
+		ofst = 16;
+	      }
+	      else ofst = MTYPE_byte_size (imag_mtype);
+
+	      wn1 = WN_Intconst (Pointer_Mtype, ofst);
+	      wn  = WN_Binary (OPR_ADD, Pointer_Mtype, wn0, wn1);
+	    }
+	    else if (WN_operator (wn) == OPR_LDID)
+	      wn = WN_Lda (Pointer_Mtype, 
+			   WN_offset(wn) + MTYPE_byte_size(WN_rtype(wn)) / 2,
+			   WN_st(wn));
+	    else Fail_FmtAssertion ("WFE_Expand_Expr: NYI for IMAGPART_EXPR");
+	  }
+	  break;
+#endif
+
+#ifdef KEY // bug 11877
+          case CALL_EXPR: {
+            WN *comma = WFE_Expand_Expr (arg0);
+            if (WN_operator(comma) != OPR_COMMA)
+              Fail_FmtAssertion ("WFE_Expand_Expr: ADDR_EXPR of call returning void unhandled");
+            wn = WN_kid1(comma);
+            if (WN_operator(wn) != OPR_LDID)
+              Fail_FmtAssertion ("WFE_Expand_Expr: ADDR_EXPR of call returning void unhandled");
+            WN_set_operator (wn, OPR_LDA);
+            WN_set_rtype (wn, Pointer_Mtype);
+            WN_set_desc (wn, MTYPE_V);
+            WN_set_ty(wn, Make_Pointer_Type(WN_ty(wn)));
+            WN_set_rtype (comma, Pointer_Mtype);
+            wn = comma;
+            break;
+          }
 #endif
 
 	  default:
@@ -2821,26 +3158,58 @@ WFE_Expand_Expr (tree exp,
 #else
 	REAL_VALUE_TYPE real = TREE_REAL_CST(exp);
 
+#ifdef TARG_IA64
 	switch (TY_mtype (ty_idx)) {
-	  case MTYPE_F4:
-	    tcon = Host_To_Targ_Float_4 (MTYPE_F4,
-		WFE_Convert_Internal_Real_to_IEEE_Single(real));
-	    break;
+      case MTYPE_F4:
+        tcon = Host_To_Targ_Float_4 (MTYPE_F4,
+        WFE_Convert_Internal_Real_to_IEEE_Single(real));
+        break;
 
-	  case MTYPE_F8:
-	    tcon = Host_To_Targ_Float (MTYPE_F8,
-		WFE_Convert_Internal_Real_to_IEEE_Double(real));
-	    break;
+      case MTYPE_F8:
+        tcon = Host_To_Targ_Float (MTYPE_F8,
+        WFE_Convert_Internal_Real_to_IEEE_Double(real));
+        break;
 
-	  case MTYPE_F10:
-	    tcon = Host_To_Targ_Float_10 (MTYPE_F10,
-		WFE_Convert_Internal_Real_to_IEEE_Double_Extended(real));
-	    break;
+      case MTYPE_F10:
+        tcon = Host_To_Targ_Float_10 (MTYPE_F10,
+        WFE_Convert_Internal_Real_to_IEEE_Double_Extended(real));
+        break;
 
-	  case MTYPE_FQ:
-            tcon = Host_To_Targ_Quad (WFE_Convert_Internal_Real_to_IEEE_Double_Extended(real));
-	    break;	    
-
+      case MTYPE_FQ:
+        tcon = Host_To_Targ_Quad (WFE_Convert_Internal_Real_to_IEEE_Double_Extended(real));
+        break;
+#else
+      int rval;
+      long rbuf [4];
+#ifdef KEY
+      INT32 rbuf_w[4]; // this is needed when long is 64-bit
+      INT32 i;
+#endif
+      switch (TY_mtype (ty_idx)) {
+        case MTYPE_F4:
+          REAL_VALUE_TO_TARGET_SINGLE (real, rval);
+          tcon = Host_To_Targ_Float_4 (MTYPE_F4, *(float *) &rval);
+          break;
+        case MTYPE_F8:
+          REAL_VALUE_TO_TARGET_DOUBLE (real, rbuf);
+#ifdef KEY
+          WFE_Convert_To_Host_Order(rbuf);
+          for (i = 0; i < 4; i++)
+            rbuf_w[i] = rbuf[i];
+          tcon = Host_To_Targ_Float (MTYPE_F8, *(double *) &rbuf_w);
+#else
+          tcon = Host_To_Targ_Float (MTYPE_F8, *(double *) &rbuf);
+#endif
+          break;
+#if defined(TARG_IA32) || defined(TARG_X8664)
+        case MTYPE_FQ:
+          REAL_VALUE_TO_TARGET_LONG_DOUBLE (real, rbuf);
+          for (i = 0; i < 4; i++)
+            rbuf_w[i] = rbuf[i];
+          tcon = Host_To_Targ_Quad (*(long double *) &rbuf_w);
+          break;
+#endif /* TARG_IA32 */
+#endif
 	  default:
 	    FmtAssert(FALSE, ("WFE_Expand_Expr unexpected float size"));
 	    break;
@@ -2859,7 +3228,9 @@ WFE_Expand_Expr (tree exp,
 	// Bug 949
 	if (TREE_CODE(TREE_REALPART(exp)) != REAL_CST || 
 	    TREE_CODE(TREE_IMAGPART(exp)) != REAL_CST) {
-	  printf("pathcc does not support complex integer data types (a gcc extension)\n");
+	  #ifdef PSC_TO_OPEN64
+	  printf("opencc does not support complex integer data types (a gcc extension)\n");
+	  #endif
 	  exit(2);
 	}
 #endif
@@ -2870,32 +3241,80 @@ WFE_Expand_Expr (tree exp,
 #else
 	REAL_VALUE_TYPE real = TREE_REAL_CST(TREE_REALPART(exp));
 	REAL_VALUE_TYPE imag = TREE_REAL_CST(TREE_IMAGPART(exp));
-	switch (TY_mtype (ty_idx)) {
-	  case MTYPE_C4:
-	    tcon = Host_To_Targ_Complex_4 (MTYPE_C4,
-		WFE_Convert_Internal_Real_to_IEEE_Single(real),
-		WFE_Convert_Internal_Real_to_IEEE_Single(imag));
-	    break;
+#ifdef TARG_IA64
+    switch (TY_mtype (ty_idx)) {
+      case MTYPE_C4:
+        tcon = Host_To_Targ_Complex_4 (MTYPE_C4,
+        WFE_Convert_Internal_Real_to_IEEE_Single(real),
+        WFE_Convert_Internal_Real_to_IEEE_Single(imag));
+        break;
 
-	  case MTYPE_C8:
-	    tcon = Host_To_Targ_Complex (MTYPE_C8,
-		WFE_Convert_Internal_Real_to_IEEE_Double(real),
-		WFE_Convert_Internal_Real_to_IEEE_Double(imag));
-	    break;
+      case MTYPE_C8:
+        tcon = Host_To_Targ_Complex (MTYPE_C8,
+        WFE_Convert_Internal_Real_to_IEEE_Double(real),
+        WFE_Convert_Internal_Real_to_IEEE_Double(imag));
+        break;
 
-	  case MTYPE_C10:
-	    tcon = Host_To_Targ_Complex_10 (MTYPE_C10,
-		WFE_Convert_Internal_Real_to_IEEE_Double_Extended(real),
-		WFE_Convert_Internal_Real_to_IEEE_Double_Extended(imag));
-	    break;
-
-	case MTYPE_CQ:
+      case MTYPE_C10:
+        tcon = Host_To_Targ_Complex_10 (MTYPE_C10,
+        WFE_Convert_Internal_Real_to_IEEE_Double_Extended(real),
+        WFE_Convert_Internal_Real_to_IEEE_Double_Extended(imag));
+        break;
+	  case MTYPE_CQ:
             tcon = Host_To_Targ_Complex_Quad (
                 WFE_Convert_Internal_Real_to_IEEE_Double_Extended(real),
                 WFE_Convert_Internal_Real_to_IEEE_Double_Extended(imag));
-	    break;
-
-	default:
+        break;
+#else
+      int rval;
+      int ival;
+      long rbuf [4];
+      long ibuf [4];
+#ifdef KEY
+      INT32 rbuf_w [4]; // this is needed when long is 64-bit
+      INT32 ibuf_w [4]; // this is needed when long is 64-bit
+      INT32 i;
+#endif
+      switch (TY_mtype (ty_idx)) {
+        case MTYPE_C4:
+          REAL_VALUE_TO_TARGET_SINGLE (real, rval);
+          REAL_VALUE_TO_TARGET_SINGLE (imag, ival);
+          tcon = Host_To_Targ_Complex_4 (MTYPE_C4,
+                      *(float *) &rval, *(float *) &ival);
+           break;
+         case MTYPE_C8:
+           REAL_VALUE_TO_TARGET_DOUBLE (real, rbuf);
+           REAL_VALUE_TO_TARGET_DOUBLE (imag, ibuf);
+#ifdef KEY
+           WFE_Convert_To_Host_Order(rbuf);
+           WFE_Convert_To_Host_Order(ibuf);
+           for (i = 0; i < 4; i++) {
+             rbuf_w[i] = rbuf[i];
+             ibuf_w[i] = ibuf[i];
+           }
+           tcon = Host_To_Targ_Complex (MTYPE_C8,
+                            *(double *) &rbuf_w, *(double *) &ibuf_w);
+#else
+	   tcon = Host_To_Targ_Complex (MTYPE_C8,
+                            *(double *) &rbuf, *(double *) &ibuf);
+#endif
+	   break;										       
+#ifdef KEY
+	  case MTYPE_CQ:
+	    REAL_VALUE_TO_TARGET_LONG_DOUBLE (real, rbuf);
+	    REAL_VALUE_TO_TARGET_LONG_DOUBLE (imag, ibuf);
+	    WFE_Convert_To_Host_Order(rbuf);
+	    WFE_Convert_To_Host_Order(ibuf);
+	    for (i = 0; i < 4; i++) {
+              rbuf_w[i] = rbuf[i];
+	      ibuf_w[i] = ibuf[i];
+	    }
+            tcon = Host_To_Targ_Complex_Quad( *(long double *) &rbuf_w,
+                                 *(long double *) &ibuf_w );
+            break;
+#endif
+#endif
+	  default:
 	    FmtAssert(FALSE, ("WFE_Expand_Expr unexpected float size"));
 	    break;
 	}
@@ -2910,7 +3329,7 @@ WFE_Expand_Expr (tree exp,
       {
 	TCON tcon;
 	tcon = Host_To_Targ_String (MTYPE_STRING,
-				    TREE_STRING_POINTER(exp),
+				    const_cast<char *>TREE_STRING_POINTER(exp),
 				    TREE_STRING_LENGTH(exp));
 	ty_idx = Get_TY(TREE_TYPE(exp));
 	st = New_Const_Sym (Enter_tcon (tcon), ty_idx);
@@ -2990,9 +3409,9 @@ WFE_Expand_Expr (tree exp,
 #endif // KEY
 	  break;
 	if (MTYPE_is_integral(mtyp) && MTYPE_is_integral(WN_rtype(wn))) {
-#ifdef TARG_X8664
 	  // For 32-bit to 64-bit conversion, make the result have the same
 	  // sign as the source.  Fix bug 480.
+#ifndef TARG_IA64
 	  if (MTYPE_size_min(mtyp) == 64 &&
 	      MTYPE_size_min(WN_rtype(wn)) == 32 &&
 	      MTYPE_is_signed(mtyp) != MTYPE_is_signed(WN_rtype(wn))) {
@@ -3049,7 +3468,11 @@ WFE_Expand_Expr (tree exp,
 	    component_ty_idx == 0) {  // only for top-level COMPONENT_REF
           // if size does not agree with ty_idx, fix ty_idx
           tree sizenode = DECL_SIZE(arg1);
-          if (TREE_CODE(sizenode) == INTEGER_CST) {
+          if (
+#ifdef KEY
+              sizenode && // bug 11726, in absence of size expression
+#endif
+              TREE_CODE(sizenode) == INTEGER_CST) {
 	    TYPE_ID c_mtyp = TY_mtype(ty_idx);
 	    INT32 bsize = Get_Integer_Value(sizenode);
 	    if (MTYPE_size_min(c_mtyp) > bsize) {
@@ -3092,12 +3515,14 @@ WFE_Expand_Expr (tree exp,
 	    WN_set_desc(wn, desc);
 	    WN_offset(wn) = WN_offset(wn)+ofst+component_offset;
 	    WN_set_ty(wn, ty_idx);
+#ifdef PATHSCALE_MERGE
 	    // bug fix for OSP_158
     	    // if (TY_kind(ty_idx) == KIND_SCALAR)
 	    if (TY_kind(ty_idx) != KIND_STRUCT)
  	      WN_set_field_id (wn, 0);	
 	    else
 	      WN_set_field_id(wn, field_id + DECL_FIELD_ID(arg1));
+#endif
 	  } 
 	}
 	// bug 6122
@@ -3479,7 +3904,7 @@ WFE_Expand_Expr (tree exp,
         wn = WFE_Expand_Expr (TREE_OPERAND (exp, 0), TRUE, nop_ty_idx, 
 			      component_ty_idx, component_offset,
 			      field_id, FALSE);
-
+#ifdef PATHSCALE_MERGE
 #ifdef Is_True_On
 	{
 	WN* tmp = wn;
@@ -3496,10 +3921,9 @@ WFE_Expand_Expr (tree exp,
 		 ("Not expected operator"));
 	}
 #endif
-
 	INT bofst = Get_Integer_Value(TREE_OPERAND(exp, 2));
 	INT bsiz =Get_Integer_Value(TREE_OPERAND(exp, 1));
-
+#endif
 	ty_idx = Get_TY (TREE_TYPE(exp));
 	TYPE_ID rtype = TY_mtype(ty_idx);
 	UINT siz = TY_size(ty_idx);
@@ -3507,8 +3931,7 @@ WFE_Expand_Expr (tree exp,
 	if (siz <= 8) {
 	  if (MTYPE_signed(rtype))
 	    desc = Mtype_AlignmentClass(siz, MTYPE_CLASS_INTEGER);
-	  else  
-            desc = Mtype_AlignmentClass(siz, MTYPE_CLASS_UNSIGNED_INTEGER);
+	  else desc = Mtype_AlignmentClass(siz, MTYPE_CLASS_UNSIGNED_INTEGER);
 	  rtype = Widen_Mtype(desc);
 	}
 	else desc = rtype;
@@ -3524,7 +3947,9 @@ WFE_Expand_Expr (tree exp,
 	else break;
 	}
 #endif // KEY
-
+	WN_set_rtype(wn, rtype);
+#ifdef PATHSCALE_MERGE
+#ifdef TARG_IA64
 	// bug fix for OSP_157 && OSP_178 && OSP_225 
 	// Besides, solve the unaligned memory access triggered in:
 	// 400.perlbench in spec2k6 and 253.perlbmk in spec2k,
@@ -3540,13 +3965,17 @@ WFE_Expand_Expr (tree exp,
 	{
 	  WN_set_desc (wn, desc);
 	}
-	WN_set_rtype(wn, rtype);
-	
+#else
+	if (WN_desc(wn) != MTYPE_V)
+	  WN_set_desc(wn, desc);
+#endif
+#endif
 	if ((bsiz & 7) == 0 &&	// field size multiple of bytes
 	    MTYPE_size_min(desc) % bsiz == 0 && // accessed loc multiple of bsiz
 	    bofst % bsiz == 0) {		// bofst multiple of bsiz
-	  // not really a bit-field extraction! 
-
+	  // not really a bit-field extraction!
+#ifdef PATHSCALE_MERGE
+#ifdef TARG_IA64
 	  BOOL change_desc = FALSE;
 	  
 	  
@@ -3563,11 +3992,14 @@ WFE_Expand_Expr (tree exp,
 	     change_desc = (MTYPE_bit_size (WN_desc(wn)) >= bsiz);
 	  }
 
-	  if (change_desc) {
+	  if (change_desc)
+#else
+	  if (WN_desc(wn) != MTYPE_V)
+#endif
+#endif
 	    if (MTYPE_signed(rtype))
 	      WN_set_desc(wn, Mtype_AlignmentClass(bsiz >> 3, MTYPE_CLASS_INTEGER));
 	    else WN_set_desc(wn, Mtype_AlignmentClass(bsiz >> 3, MTYPE_CLASS_UNSIGNED_INTEGER));
-	  }
 	  WN_load_offset(wn) = WN_load_offset(wn) + (bofst >> 3);
 	} else {
 #ifdef KEY
@@ -3714,6 +4146,11 @@ WFE_Expand_Expr (tree exp,
 	  BOOL intrinsic_op = FALSE;
           BOOL whirl_generated = FALSE;
 	  INTRINSIC iopc = INTRINSIC_NONE;
+#ifdef KEY
+	  // bug 8251: If we forcibly change the return type, we should
+	  // generate a CVT.
+	  TYPE_ID cvt_to = MTYPE_UNKNOWN;
+#endif // KEY
           
 	  if (DECL_BUILT_IN (func)) {
 	    if (DECL_BUILT_IN_CLASS (func) != BUILT_IN_MD) {
@@ -3836,7 +4273,11 @@ WFE_Expand_Expr (tree exp,
 
 	      case BUILT_IN_VA_END:
 	      {
+		arg1 = TREE_VALUE (arglist);
+		wn = WN_CreateEval ( WFE_Expand_Expr (arg1) );
+		WFE_Stmt_Append (wn, Get_Srcpos());
 		whirl_generated = TRUE;
+		wn = NULL;
 		break;
 	      }
 
@@ -3973,6 +4414,21 @@ WFE_Expand_Expr (tree exp,
                 break;
 
               case BUILT_IN_SIN:
+		intrinsic_op = TRUE;
+#ifdef TARG_X8664
+		if (!Force_IEEE_Comparisons)
+		{
+		  iopc = INTRN_SINL;
+		  if (ret_mtype != MTYPE_FQ)
+		  {
+		    // generate a cvt to 'cvt_to'
+		    cvt_to = ret_mtype;
+		    ret_mtype = MTYPE_FQ;
+		  }
+		  break;
+		}
+#endif
+
 #ifdef KEY
 		// See comments below.
                 if (ret_mtype == MTYPE_V) ret_mtype = MTYPE_F8;
@@ -3980,10 +4436,24 @@ WFE_Expand_Expr (tree exp,
 		     if (ret_mtype == MTYPE_F4) iopc = INTRN_F4SIN;
                 else if (ret_mtype == MTYPE_F8) iopc = INTRN_F8SIN;
                 else Fail_FmtAssertion ("unexpected mtype for intrinsic 'sin'");
-		intrinsic_op = TRUE;
                 break;
 
               case BUILT_IN_COS:
+		intrinsic_op = TRUE;
+#ifdef TARG_X8664
+		if (!Force_IEEE_Comparisons)
+		{
+		  iopc = INTRN_COSL;
+		  if (ret_mtype != MTYPE_FQ)
+		  {
+		    // generate a cvt to 'cvt_to'
+		    cvt_to = ret_mtype;
+		    ret_mtype = MTYPE_FQ;
+		  }
+		  break;
+		}
+#endif
+
 #ifdef KEY
 		// See comments below.
                 if (ret_mtype == MTYPE_V) ret_mtype = MTYPE_F8;
@@ -3991,7 +4461,6 @@ WFE_Expand_Expr (tree exp,
 		     if (ret_mtype == MTYPE_F4) iopc = INTRN_F4COS;
                 else if (ret_mtype == MTYPE_F8) iopc = INTRN_F8COS;
                 else Fail_FmtAssertion ("unexpected mtype for intrinsic 'cos'");
-		intrinsic_op = TRUE;
                 break;
 
 #ifdef KEY
@@ -4009,20 +4478,23 @@ WFE_Expand_Expr (tree exp,
 		break;
 
 	    case BUILT_IN_POW:
-	      // Bug 8195: If for whatever reason the pow(3) call is unused,
-	      // need_result will be false. Then, the value that this very
-	      // function assigns to ret_mtype for pow(3) is MTYPE_V. So,
-	      // just like we handle BUILT_IN_EXP above, we need to reassign
-	      // ret_mtype to MTYPE_F8.
-	      // Note that since pow[lf](3) are not builtin's(unlike the way
-	      // exp[lf]?(3)'s are), we only permit ret_mtype MTYPE_F8 here.
-	      if(ret_mtype == MTYPE_V) ret_mtype = MTYPE_F8;
-	      
-	      FmtAssert(ret_mtype == MTYPE_F8, 
+
+                // Bug 8195: If for whatever reason the pow(3) call is unused,
+                // need_result will be false. Then, the value that this very 
+                // function assigns to ret_mtype for pow(3) is MTYPE_V. So, 
+                // just like we handle BUILT_IN_EXP above, we need to reassign
+                // ret_mtype to MTYPE_F8. 
+
+                // Note that since pow[lf](3) are not builtin's (unlike the way
+                // exp[lf]?(3)'s are), we only permit ret_mtype MTYPE_F8 here.
+
+		if (ret_mtype == MTYPE_V) ret_mtype = MTYPE_F8;
+
+	        FmtAssert(ret_mtype == MTYPE_F8, 
 			  ("unexpected mtype for intrinsic 'pow'"));
-	      iopc = INTRN_F8EXPEXPR;
-	      intrinsic_op = TRUE;
-	      break;
+		iopc = INTRN_F8EXPEXPR;
+		intrinsic_op = TRUE;
+		break;
 #endif // KEY
 
               case BUILT_IN_CONSTANT_P:
@@ -4280,9 +4752,14 @@ WFE_Expand_Expr (tree exp,
 		arg2 = WFE_Expand_Expr (TREE_VALUE (list));
 		wn   = WN_Relational (OPR_EQ, WN_rtype (arg1), arg1, arg2);
 */
-		list = TREE_OPERAND (exp, 1);
-		wn   = WFE_Expand_Expr (TREE_VALUE (list));
-		whirl_generated = TRUE;
+#ifdef KEY
+                iopc = INTRN_EXPECT;
+                intrinsic_op = TRUE;
+#else
+                list = TREE_OPERAND (exp, 1);
+                wn   = WFE_Expand_Expr (TREE_VALUE (list));
+                whirl_generated = TRUE;
+#endif
 		break;
 	      }
 
@@ -4351,6 +4828,49 @@ WFE_Expand_Expr (tree exp,
 		}
 	        break;
 #endif // KEY
+
+#ifdef TARG_X8664
+	      case BUILT_IN_COSF:
+	      case BUILT_IN_COSL:
+	        if (!Force_IEEE_Comparisons)
+		{
+	          iopc = INTRN_COSL;
+		  intrinsic_op = TRUE;
+		  if (ret_mtype != MTYPE_FQ)
+		  {
+		    // generate a cvt to 'cvt_to'
+		    cvt_to = ret_mtype;
+		    ret_mtype = MTYPE_FQ;
+		  }
+		}
+		break;
+
+	      case BUILT_IN_SINF:
+	      case BUILT_IN_SINL:
+	        if (!Force_IEEE_Comparisons)
+		{
+	          iopc = INTRN_SINL;
+		  intrinsic_op = TRUE;
+		  if (ret_mtype != MTYPE_FQ)
+		  {
+		    // generate a cvt to 'cvt_to'
+		    cvt_to = ret_mtype;
+		    ret_mtype = MTYPE_FQ;
+		  }
+		}
+		break;
+#endif // TARG_X8664
+
+#ifdef KEY
+              case BUILT_IN_TAN:
+                // return type should only be F8 for tan
+                if (ret_mtype == MTYPE_F8)
+                {
+                  iopc = INTRN_TAN;
+                  intrinsic_op = TRUE;
+                }
+                break;
+#endif
 
 #if 0
 	      case BUILT_IN_ROUND_F2LL:
@@ -4434,6 +4954,8 @@ WFE_Expand_Expr (tree exp,
 		intrinsic_op = TRUE;
 		break;
 #endif
+
+
 	      default:
 #ifndef KEY
 		Fatal_Error ("Encountered not-yet-supported BUILT_IN: %d at line %d\n",
@@ -4458,7 +4980,7 @@ WFE_Expand_Expr (tree exp,
           }
 
 	  if (intrinsic_op) {
-	    WN *ikids [5];
+	    WN *ikids [16];
 	    for (i = 0, list = TREE_OPERAND (exp, 1);
 		 list;
 		 i++, list = TREE_CHAIN (list)) {
@@ -4471,6 +4993,10 @@ WFE_Expand_Expr (tree exp,
 	    }
 	    wn = WN_Create_Intrinsic (OPR_INTRINSIC_OP, ret_mtype, MTYPE_V,
 				      iopc, num_args, ikids);
+#ifdef KEY
+	    if (cvt_to != MTYPE_UNKNOWN) // bug 8251
+	      wn = WN_Cvt (ret_mtype, cvt_to, wn);
+#endif
 	    break;
 	  }
 
@@ -4506,6 +5032,7 @@ WFE_Expand_Expr (tree exp,
           if (DECL_INLINE (func)) {
             wfe_invoke_inliner = TRUE;
           }
+#ifdef TARG_IA64
           if (DECL_IS_MALLOC (func)) {
             Set_PU_has_attr_malloc (Pu_Table[ST_pu(st)]);
           } else if (DECL_IS_PURE(func)) {
@@ -4513,6 +5040,7 @@ WFE_Expand_Expr (tree exp,
           } else if (TREE_READONLY(func)) {
             Set_PU_is_pure (Pu_Table[ST_pu(st)]);
           }
+#endif
         }
 
         i = 0;
@@ -4532,6 +5060,12 @@ WFE_Expand_Expr (tree exp,
             }
           }
           else {
+#ifdef KEY // bug 11585
+	    if (WN_operator(arg_wn) == OPR_LDA) {
+	      ST *st = WN_st(arg_wn);
+	      Set_ST_addr_passed(*st);
+	    }
+#endif // KEY
 	    // gcc allows non-struct actual to correspond to a struct formal;
 	    // fix mtype of parm node so as not to confuse back-end
 	    if (arg_mtype == MTYPE_M)
@@ -4549,6 +5083,14 @@ WFE_Expand_Expr (tree exp,
 	else {
           wn0 = WN_CreateBlock ();
           WN_INSERT_BlockLast (wn0, call_wn);
+
+#ifdef KEY
+          // Preserve type information if available, in preference to
+          // (void *).
+          if (nop_ty_idx && TY_kind(ty_idx) == KIND_POINTER &&
+              TY_mtype(TY_pointed(ty_idx)) == MTYPE_V) /* pointer to void */
+            ty_idx = nop_ty_idx;
+#endif
 
 	  wn1 = WN_Ldid (ret_mtype, -1, Return_Val_Preg, ty_idx);
 
@@ -4649,7 +5191,13 @@ WFE_Expand_Expr (tree exp,
 
     case NON_LVALUE_EXPR:
       {
+#ifdef KEY
+	// Pass field_id for bug 10339.
+        wn = WFE_Expand_Expr (TREE_OPERAND (exp, 0), need_result, nop_ty_idx,
+			      component_ty_idx, component_offset, field_id);
+#else
         wn = WFE_Expand_Expr (TREE_OPERAND (exp, 0));
+#endif
       }
       break;
 
@@ -4765,7 +5313,11 @@ WFE_Expand_Expr (tree exp,
 	  ap_wn = WFE_Expand_Expr(kid0);
 	  if (WN_rtype(ap_wn) == MTYPE_M) {
 	    if (OPCODE_is_leaf(WN_opcode(ap_wn)))
+#ifdef TARG_IA64
 	      ap_wn = WN_Lda(Pointer_Mtype, 0, WN_st(ap_wn), 0);
+#else
+	      ap_wn = WN_Lda(Pointer_Mtype, WN_offset(ap_wn), WN_st(ap_wn), 0);
+#endif
 	    else {
 	      Is_True(OPCODE_is_load(WN_opcode(ap_wn)),
 		      ("WFE_Expand_Expr: unexpected VA_ARG_EXPR argument"));
@@ -4840,12 +5392,22 @@ WFE_Expand_Expr (tree exp,
 	tree type = TREE_TYPE (exp);
 	TY_IDX ty_idx = Get_TY (type);
 	TYPE_ID mtype = TY_mtype (ty_idx);
+
+        /* Compute the rounded size of the type.  */
+#ifdef TARG_IA64
 	INT64 ty_align = TYPE_ALIGN (type) / BITSPERBYTE;
 	INT64 ty_size = int_size_in_bytes (type);
 
 	INT64 align = PARM_BOUNDARY / BITS_PER_UNIT;
 	ty_size = ((ty_size + align - 1) / align) * align;
 	ty_align = ((ty_align + align - 1) / align) * align;
+#else
+	INT64 align;
+        INT64 rounded_size;
+        /* Compute the rounded size of the type.  */
+        align = PARM_BOUNDARY / BITS_PER_UNIT;
+        rounded_size = (((int_size_in_bytes (type) + align - 1) / align) * align);				
+#endif
 
 	/* Get AP.  */
 	WN        *ap_load   = WFE_Expand_Expr (TREE_OPERAND (exp, 0));
@@ -4869,6 +5431,7 @@ WFE_Expand_Expr (tree exp,
         else
           Fail_FmtAssertion ("VA_ARG_EXPR: unknown operator for ap");
 
+#ifdef TARG_IA64
 	wn = WN_COPY_Tree(ap_load);
 
 	/* Align AP for the next argument. */
@@ -4888,7 +5451,40 @@ WFE_Expand_Expr (tree exp,
 	}
 	wn = WN_Binary (OPR_ADD, Pointer_Mtype, wn,
 		WN_Intconst (Pointer_Mtype, ty_size));
-
+ 
+#else
+#ifndef KEY
+	if (Target_Byte_Sex == BIG_ENDIAN) {
+          Fail_FmtAssertion ("VA_ARG_EXPR not implemented for BIG_ENDIAN");
+          INT64 adj;
+	  adj = TREE_INT_CST_LOW (TYPE_SIZE (type)) / BITS_PER_UNIT;
+          if (rounded_size > align)
+            adj = rounded_size;
+          wn = WN_Binary (OPR_ADD, Pointer_Mtype, wn,
+          WN_Intconst (Pointer_Mtype, rounded_size - adj));
+          }
+          /* Compute new value for AP.  */
+          wn = WN_Binary (OPR_ADD, Pointer_Mtype, WN_COPY_Tree (ap_load),
+		            WN_Intconst (Pointer_Mtype, rounded_size));
+#else
+          if (Target_Byte_Sex == BIG_ENDIAN) {
+            INT64 adj;
+            adj = TREE_INT_CST_LOW (TYPE_SIZE (type)) / BITS_PER_UNIT;
+            if (rounded_size > align)
+              adj = rounded_size;
+            wn = WN_Binary (OPR_ADD, Pointer_Mtype, WN_COPY_Tree (ap_load),
+            WN_Intconst (Pointer_Mtype, 3));
+            wn = WN_Binary (OPR_BAND, Pointer_Mtype, wn,
+	                WN_Intconst (Pointer_Mtype, -8));
+            wn = WN_Binary (OPR_ADD, Pointer_Mtype, wn,
+            WN_Intconst (Pointer_Mtype, rounded_size));
+	    } else
+            /* Compute new value for AP.  */
+              wn = WN_Binary (OPR_ADD, Pointer_Mtype, WN_COPY_Tree (ap_load),
+              WN_Intconst (Pointer_Mtype, rounded_size));
+#endif
+		    
+#endif
         if (ap_st)
 	  wn = WN_Stid (Pointer_Mtype, ap_offset, ap_st, ap_ty_idx, wn);
         else {
@@ -4896,13 +5492,23 @@ WFE_Expand_Expr (tree exp,
                                 ap_ty_idx, wn, ap_addr, 0);
         }
         WFE_Stmt_Append (wn, Get_Srcpos ());
+#ifdef TARG_IA64
         wn = WN_CreateIload (OPR_ILOAD, Widen_Mtype (mtype), mtype, -ty_size,
 			     ty_idx, Make_Pointer_Type (ty_idx, FALSE),
 			     ap_load);
+#else
+	wn = WN_CreateIload (OPR_ILOAD, Widen_Mtype (mtype), mtype, -rounded_size, 
+			ap_ty_idx, Make_Pointer_Type (ap_ty_idx, FALSE),
+			ap_load);
+#endif
 #ifdef KEY
 	if (Target_Byte_Sex != Host_Byte_Sex)
           wn = WN_CreateIload (OPR_ILOAD, Widen_Mtype (mtype), mtype, 
+#ifdef TARG_IA64
 			  ((MTYPE_size_min(mtype)==32)?4:0)-ty_size, 
+#else
+			  ((MTYPE_size_min(mtype)==32)?4:0)-rounded_size,	  
+#endif
 			  ap_ty_idx, 
 			  Make_Pointer_Type (ap_ty_idx, FALSE),
 			  ap_load);
@@ -5008,8 +5614,10 @@ WFE_Expand_Expr (tree exp,
 	  wn = WFE_Expand_Expr(TREE_OPERAND(expr, 0), need_result, nop_ty_idx, 
 			       component_ty_idx, component_offset, field_id, 			       
 			       is_bit_field);
-	else
+	else {
 	  WFE_Expand_Expr(expr, FALSE);
+	  wn = WN_Intconst(MTYPE_I4, 0); // dummy, bug 10345
+	}
 	// FIXME: Are we missing the last expr, i.e. 'last' here?
       }
       break;
@@ -5171,7 +5779,11 @@ WFE_Expand_Expr (tree exp,
          WFE_Expand_Expr (init, FALSE);
 
        struct nesting *loop_nest= alloc_nesting();
-       construct_nesting (loop_nest, wfe_loop_stack, wfe_nesting_stack, 0);
+       LABEL_IDX for_exit_label_idx;
+
+       New_LABEL (CURRENT_SYMTAB, for_exit_label_idx);
+       construct_nesting (loop_nest, wfe_loop_stack, wfe_nesting_stack,
+                          for_exit_label_idx);
 
        wfe_nesting_stack = wfe_loop_stack = loop_nest;
 
@@ -5197,6 +5809,11 @@ WFE_Expand_Expr (tree exp,
        // 5. End the loop
        WFE_Expand_End_Loop ();       
        popstack (loop_nest);
+       wn = WN_CreateLabel ((ST_IDX) 0,
+                            for_exit_label_idx,
+                            0, NULL);
+       WFE_Stmt_Append (wn, Get_Srcpos ());
+
        break;
      }
 
@@ -5206,7 +5823,11 @@ WFE_Expand_Expr (tree exp,
        // by expansion of STMT_EXPR. Otherwise, it would have been 
        // handled in gnu/ files.
        struct nesting *loop_nest = alloc_nesting();
-       construct_nesting (loop_nest, wfe_loop_stack, wfe_nesting_stack, 0);
+       LABEL_IDX while_exit_label_idx;
+
+       New_LABEL (CURRENT_SYMTAB, while_exit_label_idx);
+       construct_nesting (loop_nest, wfe_loop_stack, wfe_nesting_stack,
+                          while_exit_label_idx);
 
        wfe_nesting_stack = wfe_loop_stack = loop_nest;
 
@@ -5227,6 +5848,10 @@ WFE_Expand_Expr (tree exp,
        // 3. End the loop
        WFE_Expand_End_Loop ();       
        popstack (loop_nest);
+       wn = WN_CreateLabel ((ST_IDX) 0,
+                            while_exit_label_idx,
+                            0, NULL);
+       WFE_Stmt_Append (wn, Get_Srcpos ());
        break;
      }
 
@@ -5237,7 +5862,10 @@ WFE_Expand_Expr (tree exp,
        // by expansion of STMT_EXPR. Otherwise, it would have been 
        // handled in gnu/ files.
        struct nesting *loop_nest = alloc_nesting();
-       construct_nesting (loop_nest, wfe_loop_stack, wfe_nesting_stack, 0);
+       LABEL_IDX dostmt_exit_label_idx;
+
+       New_LABEL (CURRENT_SYMTAB, dostmt_exit_label_idx);
+       construct_nesting (loop_nest, wfe_loop_stack, wfe_nesting_stack, dostmt_exit_label_idx);
 
        wfe_nesting_stack = wfe_loop_stack = loop_nest;
 
@@ -5261,6 +5889,10 @@ WFE_Expand_Expr (tree exp,
        // 3. End the loop
        WFE_Expand_End_Loop ();       
        popstack (loop_nest);
+       wn = WN_CreateLabel ((ST_IDX) 0,
+                            dostmt_exit_label_idx,
+                            0, NULL);
+       WFE_Stmt_Append (wn, Get_Srcpos ());
        break;
      }
 
@@ -5342,12 +5974,15 @@ WFE_Expand_Expr (tree exp,
        LABEL_IDX *label_idx = (LABEL_IDX *)malloc(sizeof(LABEL_IDX));
        *label_idx = 0;
 
-       if (wfe_nesting_stack == wfe_case_stack)
-         *label_idx = get_nesting_label (wfe_case_stack);
+       // bug 11701
+       struct nesting * n = wfe_get_matching_scope (wfe_nesting_stack);
+       Is_True (n, ("WFE_Expand_Expr: break stmt without enclosing scope"));
+       *label_idx = get_nesting_label (n);
 
-       WFE_Expand_Exit_Something (wfe_nesting_stack, wfe_cond_stack, 
-       				wfe_loop_stack, wfe_case_stack, label_idx);
+       WFE_Expand_Exit_Something (n, wfe_cond_stack,
+                                wfe_loop_stack, wfe_case_stack, label_idx);
        free (label_idx);
+
        break;
      }
 
@@ -5381,6 +6016,15 @@ WFE_Expand_Expr (tree exp,
        // by expansion of STMT_EXPR. Otherwise, it would have been 
        // handled in gnu/ files.
        process_omp_stmt (exp);
+       break;
+     }
+   case VECTOR_CST:
+     {
+       ST * init_st = Gen_Temp_Symbol (Get_TY(TREE_TYPE(exp)), "__vec_cst");
+       Traverse_Aggregate_Vector_Const (init_st, exp, 0, 0);
+       TY_IDX ty = ST_type (init_st);
+       TYPE_ID mtype = TY_mtype (ty);
+       wn = WN_CreateLdid (OPR_LDID, mtype, mtype, 0, init_st, ty, 0);
        break;
      }
 #endif

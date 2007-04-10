@@ -1,6 +1,10 @@
 /*
+ * Copyright 2002, 2003, 2004, 2005, 2006 PathScale, Inc.  All Rights Reserved.
+ */
 
-  Copyright (C) 2000 Silicon Graphics, Inc.  All Rights Reserved.
+/*
+
+  Copyright (C) 2000, 2001 Silicon Graphics, Inc.  All Rights Reserved.
 
   This program is free software; you can redistribute it and/or modify it
   under the terms of version 2 of the GNU General Public License as
@@ -54,6 +58,7 @@
  * ====================================================================
  * ====================================================================
  */
+
 #define __STDC_LIMIT_MACROS
 #include <stdint.h>
 #include <alloca.h>
@@ -93,6 +98,8 @@
 #include "lra.h"
 #include "bb_set.h"       // BB_SET_* routines 
 #include "DaVinci.h"
+
+#ifdef TARG_IA64
 #include "ipfec_options.h"
 #include "cg.h"
 #include "region_bb_util.h"
@@ -100,6 +107,7 @@
 
 #include <vector>
 #include "if_conv.h"
+#endif
 
 /* Allocate basic blocks for the duration of the PU. */
 #define BB_Alloc()  TYPE_PU_ALLOC(BB)
@@ -277,7 +285,14 @@ Gen_BB_Like (BB *model)
 BB *
 Gen_And_Append_BB (BB *prev_bb) 
 {
+#ifdef KEY
+  /* bug#448
+     The rid info from <prev_bb> should be propagated.
+   */
+  BB *bb = Gen_BB_Like(prev_bb);
+#else
   BB *bb = Gen_BB();
+#endif
 
   if (prev_bb != NULL) {
     Is_True (BB_next(prev_bb) == NULL, 
@@ -521,7 +536,8 @@ Target_Simple_Fall_Through_BB(
 
   BB_next(bb) = target_bb;
   BB_prev(target_bb) = bb;
-   
+
+#ifdef TARG_IA64   
   if(IPFEC_Enable_Region_Formation && RGN_Formed) {
     BB *bb_wo_node = NULL;
     REGIONAL_CFG_NODE *src_node   = Regional_Cfg_Node(bb);
@@ -540,7 +556,9 @@ Target_Simple_Fall_Through_BB(
   } else {
     Link_Pred_Succ_with_Prob (bb, target_bb, 1.0F);
   }  
-   
+#else
+  Link_Pred_Succ_with_Prob (bb, target_bb, 1.0F);
+#endif
   br = BB_Remove_Branch(bb);
   FmtAssert(!(br && OP_cond(br)), ("Unexpected conditional branch."));
 }
@@ -734,7 +752,9 @@ static const char * const BBKIND_names[] = {
   /* 6 */	"CALL",
   /* 7 */	"REGION_EXIT",
   /* 8 */	"TAIL_CALL",
+#ifdef TARG_IA64
   /* 9 */	"CHK",
+#endif
 };
 /* WARNING: the order of this array must match #defines in bb.h. */
 
@@ -777,10 +797,11 @@ BB_kind(BB *bb)
    */
   if (BB_call(bb)) return BBKIND_CALL;
 
+#ifdef TARG_IA64
   /* A chk bb end with a chk op
    */
   if (BB_Last_chk_op(bb)) return BBKIND_CHK;// bug fix for OSP_104, OSP_105, OSP_192
-   
+#endif
   /* Get the branch OP and the number of successors.
    */
   br = BB_branch_op(bb);
@@ -950,12 +971,14 @@ Print_BB_Header ( BB *bp, BOOL flow_info_only, BOOL print_tn_info )
     if (BB_call(bp))	fprintf ( TFile, "  Tail call block\n" );
     else		fprintf ( TFile, "  Exit block\n" );
   } else if (BB_call(bp)) fprintf ( TFile, "  Call block\n" );
+#ifdef TARG_IA64
   if (BB_chk_split(bp)) 	fprintf ( TFile, "  Check split block\n" );
   if (BB_chk_split_head(bp)) 	fprintf ( TFile, "  Check split head block\n" );
   //bug fix for OSP_212
-  if (BB_chk_split_tail(bp)) 	fprintf ( TFile, "  Check split tail block\n" );
+  if (BB_chk_split_tail(bp))    fprintf ( TFile, "  Check split tail block\n" );
   if (BB_recovery(bp)) 	fprintf ( TFile, "  Recovery block\n" );
   if (BB_scheduled(bp)) 	fprintf ( TFile, "  Scheduled BB\n" );
+#endif
 
   if (BB_rid(bp)) {
     INT exits;
@@ -1050,6 +1073,27 @@ Print_BB_Header ( BB *bp, BOOL flow_info_only, BOOL print_tn_info )
   fprintf ( TFile, "In linear order, BB_prev == BB:%2d; BB_next == BB:%2d\n",
 	    (BB_prev(bp) ? BB_id(BB_prev(bp)) : -1),
 	    (BB_next(bp) ? BB_id(BB_next(bp)) : -1) );
+
+  fprintf ( TFile, "Predecessors:\t" );
+  i = 0;
+  FOR_ALL_BB_PREDS (bp, bl) {
+    fprintf ( TFile, "%sBB:%2d ",
+	      ( (i == 0) ? "" : (i%5 == 0) ? ",\n\t\t" : ", " ),
+	      BB_id(BBLIST_item(bl)));
+    ++i;
+  }
+  if ( i == 0 ) fprintf ( TFile, "none" );
+  fprintf ( TFile, "\nSuccessors%s:\t", freqs ? " (w/probs)" : "" );
+  i = 0;
+  FOR_ALL_BB_SUCCS (bp, bl) {
+    fprintf ( TFile, "%sBB:%2d",
+	      ( (i == 0) ? "" : (i%5 == 0) ? ",\n\t\t" : ", " ),
+	      BB_id(BBLIST_item(bl)));
+    if (freqs) fprintf(TFile, " (%g)", BBLIST_prob(bl));
+    ++i;
+  }
+  if ( i == 0 ) fprintf ( TFile, "none" );
+  fprintf ( TFile, "\n" );
 
   if (BB_has_label(bp)) {
     ANNOTATION *ant;
@@ -1320,6 +1364,7 @@ BB_branch_op( BB *bb )
   return NULL;
 }
 
+#ifdef TARG_IA64
 /* ====================================================================
  *
  * Last_Non_Nop_op
@@ -1353,6 +1398,8 @@ BB_Last_chk_op( BB *bb )
   }
   return NULL;
 }
+#endif
+
 /* ====================================================================
  *
  * BB_xfer_op
@@ -1538,7 +1585,8 @@ INT BB_Copy_Annotations(BB *to_bb, BB *from_bb, ANNOTATION_KIND kind)
 }
 
 /* Copy all annotations from <from_bb> to <to_bb>, and returns 
- * the number of annotations copied */
+ * the number of annotations copied 
+ */
 INT BB_Copy_All_Annotations (BB *to_bb, BB *from_bb) {
    INT32 cnt = 0;
    ANNOTATION *ant = BB_annotations(from_bb);
@@ -2348,7 +2396,11 @@ BB_Transfer_Entryinfo(BB* from, BB* to)
   Reset_BB_entry(from);
   if (BB_handler(from)) {
     Set_BB_handler(to);
+#ifdef TARG_IA64
     Reset_BB_handler(to);
+#else
+    Reset_BB_handler(from);
+#endif
   }
   annot = ANNOT_Get(BB_annotations(from),ANNOT_ENTRYINFO);
   Is_True(annot != NULL,("No entryinfo annotation for BB%d",BB_id(from)));
@@ -2658,6 +2710,21 @@ ST *BB_st(BB *bb)
 }
 
 
+#ifdef KEY
+static BOOL OP_defs_argument( OP* op )
+{
+  for( int resnum = 0; resnum < OP_results(op); resnum++ ){
+    TN* tn = OP_result( op, resnum );
+    if( TN_is_dedicated( tn ) &&
+	REGISTER_SET_MemberP( REGISTER_CLASS_function_argument(TN_register_class(tn)), TN_register(tn) ) )
+      return TRUE;
+  }
+
+  return FALSE;
+}
+#endif
+
+
 /* =======================================================================
  *
  *  Split_BB
@@ -2714,6 +2781,26 @@ static void Split_BB(BB *bb)
           break;
         }
       }
+#ifdef TARG_X8664
+      /* The life of rflags does not across BBs.
+       */
+      while( min_idx <= len && OP_reads_rflags(op_vec[min_idx]) ){
+	min_idx++;
+      }
+#endif
+
+#ifdef KEY
+      /* Fix bug#1820
+	 While splitting a big bb, don't violate the assumption that
+	 a definition of an argument register should be in the call block.
+       */
+      if( BB_call( bb ) ){
+	while( min_idx > 1 &&
+	       OP_defs_argument( op_vec[min_idx-1] ) ){
+	  min_idx--;
+	}
+      }
+#endif
       splits[split_idx++] = min_idx;
       if (len - min_idx <= Split_BB_Length) break;
       i = min_idx + low;
@@ -2782,6 +2869,14 @@ static void Split_BB(BB *bb)
     INT op_idx;
     for (op_idx = splits[i]; op_idx < splits[i+1]; op_idx++) {
       op = op_vec[op_idx];
+#ifdef Is_True_On
+      if( !BB_call( new_bb ) &&
+	  BB_call( last_bb ) ){
+	if( OP_defs_argument( op ) ){
+	  DevWarn( "Split_BBs: argument and call are not defined at the same BB" );
+	}
+      }
+#endif
       BB_Move_Op_To_End(new_bb, bb, op);
     }
   }
@@ -2832,6 +2927,7 @@ Split_BBs(void)
 * Return all bb's parents bb including itself.
 *==========================================================================
 */
+#ifdef TARG_IA64
 BB_SET*
 Find_BB_Parents(BB* bb)
 {
@@ -2856,6 +2952,7 @@ Find_BB_Parents(BB* bb)
   }
   return result;
 }
+#endif
 
 // A temp BB_SET variable reserved for the BB_REGION routines because
 // creating and destroying BB_SET is an expensive operation.

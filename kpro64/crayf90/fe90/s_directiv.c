@@ -1,4 +1,8 @@
 /*
+ *  Copyright (C) 2006. QLogic Corporation. All Rights Reserved.
+ */
+
+/*
  * Copyright 2004, 2005, 2006 PathScale, Inc.  All Rights Reserved.
  */
 
@@ -1434,6 +1438,7 @@ void directive_stmt_semantics(void)
             ok &= expr_semantics(&opnd, &exp_desc);
             COPY_OPND(IR_OPND_L(ir_idx), opnd);
 
+#ifdef TARG_IA64
             if (OPND_FLD(opnd) != CN_Tbl_Idx ||
                 exp_desc.rank  != 0          ||
                 exp_desc.type  != Integer)   {
@@ -1470,6 +1475,7 @@ void directive_stmt_semantics(void)
 	    IR_IDX_L(ir_idx)		= CN_INTEGER_ZERO_IDX;
 	    IR_FLD_L(ir_idx)		= CN_Tbl_Idx;
 #endif /* KEY Bug 7489 */
+#endif /* TARG_IA64 */
          }
          break;
 
@@ -2099,6 +2105,9 @@ void directive_stmt_semantics(void)
       case Endsingle_Open_Mp_Opr:
       	  //open_mp_copyprivate_semantics(); /* by jhs, 02/7/22 */
          end_blk_mp_semantics(TRUE);
+#ifdef KEY /* Bug 10441 */
+         cdir_switches.single = FALSE;
+#endif /* KEY Bug 10441 */
          break;
 
       case Flush_Open_Mp_Opr:
@@ -2158,6 +2167,9 @@ void directive_stmt_semantics(void)
          break;
 
       case Single_Open_Mp_Opr:
+#ifdef KEY /* Bug 10441 */
+         cdir_switches.single = TRUE;
+#endif /* KEY Bug 10441 */
          open_mp_directive_semantics(Single_Omp);
          break;
 
@@ -4390,7 +4402,11 @@ static void set_mp_task_flags(int       ir_idx,
 
 {
    int                  attr_idx;
+#ifdef KEY /* Bug 10177 */
+   mp_directive_type    directive = Doacross;
+#else /* KEY Bug 10177 */
    mp_directive_type    directive;
+#endif /* KEY Bug 10177 */
    int                  i;
    int                  list_array[MP_DIR_LIST_CNT];
    int                  list_idx;
@@ -5079,7 +5095,6 @@ static void open_mp_directive_semantics(open_mp_directive_type directive)
        directive == Sections_Omp ||
        directive == Single_Omp ||
        directive == Workshare_Omp) {
-
       work_sharing_dir = TRUE;
    }
     
@@ -6544,7 +6559,11 @@ static void set_open_mp_task_flags(int		ir_idx,
 
 {
    int                  	attr_idx;
+#ifdef KEY /* Bug 10177 */
+   open_mp_directive_type	directive = Doacross;
+#else /* KEY Bug 10177 */
    open_mp_directive_type	directive;
+#endif /* KEY Bug 10177 */
    int                  	i;
    int                  	list_array[OPEN_MP_LIST_CNT];
    int                  	list_idx;

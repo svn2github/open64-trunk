@@ -1,5 +1,5 @@
 /* 
-   Copyright 2003, 2004, 2005 PathScale, Inc.  All Rights Reserved.
+   Copyright 2003, 2004, 2005, 2006 PathScale, Inc.  All Rights Reserved.
    File modified June 20, 2003 by PathScale, Inc. to update Open64 C/C++ 
    front-ends to GNU 3.2.2 release.
  */
@@ -76,6 +76,7 @@ Get_TY (tree type_tree)
 	return Create_TY_For_Tree (type_tree, TY_IDX_ZERO);
 }
 
+#ifdef PATHSCALE_MERGE
 // bug fix for OSP_133
 // return section name for corresponding ST via st_attr table
 struct find_st_attr_section_name {
@@ -87,6 +88,7 @@ struct find_st_attr_section_name {
 				ST_ATTR_st_idx (*st_attr) == st);
 	}
 };
+#endif
 /*
  * either return a previously created ST associated with a
  * var-decl/parm-decl/function_decl, or create a new one.
@@ -114,6 +116,7 @@ Get_ST (tree decl_tree)
 		    !DECL_INITIAL(decl_tree)         &&
 		    TREE_STATIC(decl_tree))
 		{
+#ifdef PATHSCALE_MERGE
 			    // bug fix for OSP_133
 		    if (flag_no_common || DECL_SECTION_NAME(decl_tree)) {
 			/* if st has declared section name, and the section name isn't 
@@ -144,6 +147,7 @@ Get_ST (tree decl_tree)
 					Save_Str (TREE_STRING_POINTER (DECL_SECTION_NAME (decl_tree))));
                             }
 			}
+#endif
 			Set_ST_sclass (st, SCLASS_UGLOBAL);
 		    }
 		    else {

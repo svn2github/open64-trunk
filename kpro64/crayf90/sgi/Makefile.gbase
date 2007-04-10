@@ -1,5 +1,7 @@
 # -*- Makefile -*-
 #
+#  Copyright (C) 2006. QLogic Corporation. All Rights Reserved.
+#
 #  Copyright (C) 2000, 2001 Silicon Graphics, Inc.  All Rights Reserved.
 #
 #  This program is free software; you can redistribute it and/or modify it
@@ -130,6 +132,9 @@ else
 INCLUDE_DIR 		= $(ROOT)/usr/include
 endif
 
+ifeq ($(BUILD_TARGET), X8664)
+LIBFORTRAN_DIR          = $(TARGDIR)/libfortran
+endif
 LIBCOMUTIL_DIR 		= $(BUILD_TOT)/libcomutil
 
 TARG_COMUTIL_DIR	= $(TARGDIR)/libcomutil
@@ -239,9 +244,9 @@ LCXXINCS = $(LCINCS)
 
 LCDEFS = $(HOSTDEFS) $(TARGDEFS) -D_SGI_SGI -D_TARGET_MONGOOSE -D_SGI_WHIRLCONVERT
 LCXXDEFS = $(LCDEFS)
-
 LCOPTS += $(STD_COMPILE_OPTS) $(STD_C_OPTS)
 LCXXOPTS += $(STD_COMPILE_OPTS)
+
 
 ifeq ($(BUILD_VARIANT), DEBUG)
 LCDEFS += -D_DEBUG
@@ -272,6 +277,9 @@ LIBRARY = fe90_sgi.a
 LIBRARIES = $(FE90_TARG_DIR)/fe90.a $(ARITH_TARG_DIR)/arith.a \
 	$(LIBCIF_TARG_DIR)/libcif.a #$(F90SGI_TARG_DIR)/libf90sgi.a
 ifeq ($(BUILD_TARGET), IA64)
+LIBRARIES += $(F90SGI_TARG_DIR)/libf90sgi.a
+endif
+ifeq ($(BUILD_TARGET), X8664)
 LIBRARIES += $(F90SGI_TARG_DIR)/libf90sgi.a
 endif
 
@@ -306,6 +314,9 @@ first:
 	$(call submake,$(ARITH_TARG_DIR))
 	$(call submake,$(FE90_TARG_DIR))
 ifeq ($(BUILD_TARGET),IA64)
+	$(call submake,$(F90SGI_TARG_DIR))
+endif
+ifeq ($(BUILD_TARGET),X8664)
 	$(call submake,$(F90SGI_TARG_DIR))
 endif
 
@@ -349,24 +360,31 @@ ifeq ($(BUILD_ARCH),IA32)
 ifeq ($(BUILD_TARGET),IA64)
 	$(link.c++f) -o $@ $(OBJECTS) compiler_build_date.o  -L./ $(TARG_COMUTIL_DIR)/libcomutil.a $(LDFLAGS) $(F90_RTLIBS) -m32 -lm
 else
-	$(link.c++f) -o $@ $(OBJECTS) compiler_build_date.o  -L./ $(TARG_COMUTIL_DIR)/libcomutil.a $(LDFLAGS) $$($(F90) -m32 -print-file-name=lib$(PSC_NAME_PREFIX)fortran.a)
+ifeq ($(BUILD_TARGET),X8664)
+	$(link.c++f) -o $@ $(OBJECTS) compiler_build_date.o  -L./ $(TARG_COMUTIL_DIR)/libcomutil.a $(LDFLAGS) $(LIBFORTRAN_DIR)/libfortran.a
+else
+	$(link.c++f) -o $@ $(OBJECTS) compiler_build_date.o  -L./ $(TARG_COMUTIL_DIR)/libcomutil.a $(LDFLAGS) $$($(F90) -m32 -print-file-name=lib$(OPEN64_NAME_PREFIX)fortran.a)
+endif
 endif
 else
 ifeq ($(BUILD_TARGET),IA64)
 	$(link.c++f) -o $@ $(OBJECTS) compiler_build_date.o  -L./ $(TARG_COMUTIL_DIR)/libcomutil.a $(LDFLAGS) $(F90_RTLIBS) -lm
 else
-	$(link.c++f) -o $@ $(OBJECTS) compiler_build_date.o  -L./ $(TARG_COMUTIL_DIR)/libcomutil.a $(LDFLAGS) $(PSC_PREFIX)/lib/libm.a
+ifeq ($(BUILD_TARGET),X8664)
+	$(link.c++f) -o $@ $(OBJECTS) compiler_build_date.o  -L./ $(TARG_COMUTIL_DIR)/libcomutil.a $(LDFLAGS) $(F90_RTLIBS) -lm
+else
+	$(link.c++f) -o $@ $(OBJECTS) compiler_build_date.o  -L./ $(TARG_COMUTIL_DIR)/libcomutil.a $(LDFLAGS) $(OPEN64_PREFIX)/lib/libm.a
+endif
 endif
 endif
 
-bk_root := $(shell bk root 2>/dev/null || echo unknown)
+hg_root := $(shell hg root 2>/dev/null || echo unknown)
 
 compiler_build_date.c:
 	@echo 'GEN    $@'
 	@echo '#include "version.h"' > $@
-	@echo 'const char *const cset_rev = "$(shell bk -R prs -hr+ -d:I: ChangeSet || echo unknown)";' >> $@
-	@echo 'const char *const cset_key = "$(shell bk -R prs -hr+ -d:CSETKEY: ChangeSet || echo unknown)";' >> $@
-	@echo 'const char *const build_root = "$(bk_root)";' >> $@
+	@echo 'const char *const cset_id = "$(shell hg parents --template "{node}" || echo unknown)";' >> $@
+	@echo 'const char *const build_root = "$(hg_root)";' >> $@
 	@echo 'const char *const build_host = "$(shell hostname -f)";' >> $@
 	@echo 'const char *const build_user = "$(shell id -un)";' >> $@
 	@echo 'const char *const mfef90_compiler_build_date = "$(shell date +'%Y-%m-%d %H:%M:%S %z')";' >> $@

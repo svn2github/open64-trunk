@@ -1,6 +1,6 @@
-# -*- Makefile -*-
 #
-#  Copyright 2004, 2005 PathScale, Inc.  All Rights Reserved.
+#
+#  Copyright (C) 2000, 2001 Silicon Graphics, Inc.  All Rights Reserved.
 #
 #  This program is free software; you can redistribute it and/or modify it
 #  under the terms of version 2.1 of the GNU Lesser General Public License 
@@ -22,36 +22,58 @@
 #  Foundation, Inc., 59 Temple Place - Suite 330, Boston MA 02111-1307, 
 #  USA.
 #
-#  Contact information:  PathScale, Inc., 2071 Stierlin Court, Suite 200,
-#  Mountain View CA 94043, USA, or:
+#  Contact information:  Silicon Graphics, Inc., 1600 Amphitheatre Pky,
+#  Mountain View, CA 94043, or:
 #
-#  http://www.pathscale.com
+#  http://www.sgi.com
 #
 #  For further information regarding this notice, see:
 #
 #  http://oss.sgi.com/projects/GenInfo/NoticeExplan
+#
+#
+
+#
+#  Makefile for libmv
+#
 
 #
 #  Define build parameters
 #
 BUILD_AREA     = ..
 BUILD_TOT      = ../..
-BUILD_BASE     = ../../libpscrt
+BUILD_BASE     = ../../libm
 BUILD_ROOTS    = TARGET
 BUILD_ABI      = I32BIT
 BUILD_ARCH     = IA32
 BUILD_TYPE     = SHARED
-BUILD_BOTH     = quite
-BUILD_OPTIMIZE = NODEBUG
-BUILD_VARIANT  = DEFAULT
+BUILD_OPTIMIZE = DEFAULT
+BUILD_VARIANT  = LIBMV
 BUILD_INSTALL  = DEFAULT
-BUILD_TARGET   = IA32
+BUILD_TARGET   = X8664
 BUILD_COMPILER = GNU
 BUILD_OS       = LINUX
 BUILD_HOST     = IA32
+
+
+#ifdef IRIX
+# smake
+
+#  Include (optional) parameter override file
+#if exists($(BUILD_AREA)/Makefile.override)
+#include "$(BUILD_AREA)/Makefile.override"
+#endif
+#  Include setup file which will then include Makefile.base
+#include "$(BUILD_TOT)/Makefile.setup"
+
+#else
+# gmake
 
 #  Include (optional) parameter override file
 -include $(BUILD_AREA)/Makefile.override
 
 #  Include setup file which will then include Makefile.base
 include $(BUILD_TOT)/Makefile.gsetup
+
+#endif
+

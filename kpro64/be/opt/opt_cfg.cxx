@@ -1,7 +1,7 @@
 //-*-c++-*-
 
 /*
- * Copyright 2003, 2004, 2005 PathScale, Inc.  All Rights Reserved.
+ * Copyright 2003, 2004, 2005, 2006 PathScale, Inc.  All Rights Reserved.
  */
 
 // ====================================================================
@@ -57,7 +57,7 @@
 
 #ifdef _KEEP_RCS_ID
 #define opt_cfg_CXX	"opt_cfg.cxx"
-static char *rcs_id = 	opt_cfg_CXX"$Revision: 1.1.1.1 $";
+static char *rcs_id = 	opt_cfg_CXX"$Revision: 1.30 $";
 #endif /* _KEEP_RCS_ID */
 
 #include "defs.h"
@@ -1158,6 +1158,10 @@ CFG::Is_simple_expr(WN *wn) {
     return 1;
   if (opr == OPR_INTCONST || opr == OPR_CONST)
     return 1;
+#ifdef KEY      // bug 11542
+  if (opr == OPR_LDA)
+    return 1;
+#endif
 #if defined(TARG_IA32) || defined(TARG_X8664)
   if (! MTYPE_is_integral(WN_rtype(wn)))
     return 0;
@@ -1420,7 +1424,12 @@ CFG::Lower_if_stmt( WN *wn, END_BLOCK *ends_bb )
 #ifdef KEY  // do not if-convert if it has either empty then or else part and it
       // is the only statement in the BB since CG's cflow can be quite effective
       ((!empty_else && !empty_then) ||
+#ifdef TARG_IA64
+      // here select larger than 6 from osprey, I think it may be more aggressive
        WOPT_Enable_If_Conv_Limit > 6 ||
+#else
+       WOPT_Enable_Simple_If_Conv > 1 ||
+#endif
        WN_next(wn) != NULL || // no next statement in BB
        (_current_bb->Firststmt() != NULL && // no previous statement in BB
         (_current_bb->Firststmt() != _current_bb->Laststmt() || // prev is LABEL
@@ -1494,10 +1503,18 @@ CFG::Lower_if_stmt( WN *wn, END_BLOCK *ends_bb )
 	}
       }
       else if (empty_then || empty_else) {
+	WN *addr_expr = WN_kid1(stmt);
+	// because need to generate an extra ILOAD, if the if_test involves
+	// the addr_expr, it is probably means speculation is unsafe, so give up
+        // bug 7845
+	if (OPERATOR_is_compare(WN_operator(if_test)) &&
+	    (Same_addr_expr(WN_kid0(if_test), addr_expr) ||
+	     Same_addr_expr(WN_kid1(if_test), addr_expr)))
+	  goto skip_if_conversion;
+
 	// because need to generate an extra ILOAD, see that a similar ILOAD has
 	// occurred unconditionally; check currently limited to conditional expr
 	// plus previous 2 statements
-	WN *addr_expr = WN_kid1(stmt);
 	if (! Has_iload_with_same_addr_expr(addr_expr, if_test)) {
 	  // check previous statement
 	  if (_current_bb->Laststmt() == NULL) 
@@ -2247,6 +2264,14 @@ CFG::Add_one_region( WN *wn, END_BLOCK *ends_bb )
 
   // remember the last block in the region
   BB_NODE *last_region_bb = _current_bb;
+
+#ifdef KEY // bug 8690
+  if (REGION_is_mp(wn) && _rgn_level != RL_MAINOPT &&
+      Is_region_with_pragma(wn,WN_PRAGMA_SINGLE_PROCESS_BEGIN)) {
+    // add extra edge in the cfg to reflect jump around the single region
+    Connect_predsucc( first_region_bb, last_region_bb );
+  }
+#endif
 
   // last pieces of missing information
   bb_region->Set_region_end(last_region_bb);
@@ -3920,6 +3945,7 @@ invalidate_loops( BB_LOOP *loop )
       head->Body_set()->ClearD();
     if ( head->True_body_set() != NULL ) 
       head->True_body_set()->ClearD();
+    head->Set_size_estimate(0);
   }
 }
 
@@ -4102,6 +4128,7 @@ CFG::Check_if_it_can_reach_body_first_bb(BB_NODE *bb, BB_LOOP *loop)
   bb->Reset_TLBS_processing();
   if (can_reach_body_first_bb) {
     loop->True_body_set()->Union1D(bb);
+    loop->Incr_size_estimate(bb->Code_size_est());
     if (Trace()) 
       fprintf(TFile, "adding bb%d\n", bb->Id());
     return TRUE;
@@ -4144,11 +4171,13 @@ CFG::Compute_true_loop_body_set(BB_LOOP *loops)
 		    Mem_pool()));
     else loop->True_body_set()->ClearD();
     loop->True_body_set()->Union1D(loop->Body()); // body first BB is member
+    loop->Set_size_estimate(loop->Body()->Code_size_est());
     { // union true_body_set's from its immediate children
       BB_LOOP *nested_loop;
       BB_LOOP_ITER nested_loop_iter(loop->Child());
       FOR_ALL_NODE(nested_loop, nested_loop_iter, Init()) {
         loop->True_body_set()->UnionD(nested_loop->True_body_set());
+        loop->Incr_size_estimate(nested_loop->Size_estimate());
       }
     }
     // initialize non_true_body_set
@@ -4335,6 +4364,7 @@ Collect_loop_body(BB_LOOP *loop, BB_NODE *bb)
 	  ("BB %d already visited.", bb->Id()));
 
   loop->True_body_set()->Union1D(bb);
+  loop->Incr_size_estimate(bb->Code_size_est());
 
   // A loopback block can belong to two loops.
   if (bb->Innermost() == NULL)
@@ -4354,6 +4384,7 @@ Collect_loop_body(BB_LOOP *loop, BB_NODE *bb)
       Is_True(!inner->True_body_set()->EmptyP(), 
 	      ("inner loop true body set not computed."));
       loop->True_body_set()->UnionD(inner->True_body_set());
+      loop->Incr_size_estimate(inner->Size_estimate());
       if (inner->Well_formed()) {
 	if (!loop->True_body_set()->MemberP(inner->Preheader()))
 	  Collect_loop_body(loop, inner->Preheader());
@@ -5168,6 +5199,9 @@ CFG::Fall_through(BB_NODE *bb1, BB_NODE *bb2)
   STMTREP *bb_branch = bb1->Branch_stmtrep();
   if (bb_branch == NULL) return TRUE;
   if (OPC_GOTO != bb_branch->Op()) return FALSE;
+#ifdef KEY // bug 11304
+  if (bb1->Succ() == NULL) return FALSE;
+#endif
   if (bb1->Succ()->Node() == bb2) return TRUE;
   return FALSE;
 }

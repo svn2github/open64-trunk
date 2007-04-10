@@ -1,5 +1,9 @@
 /*
- * Copyright 2004 PathScale, Inc.  All Rights Reserved.
+ *  Copyright (C) 2006. QLogic Corporation. All Rights Reserved.
+ */
+
+/*
+ * Copyright 2004, 2005, 2006 PathScale, Inc.  All Rights Reserved.
  */
 
 /*
@@ -46,7 +50,7 @@
 
 #ifdef _KEEP_RCS_ID
 /*REFERENCED*/
-static char *rcs_id = "$Source: /proj/osprey/CVS/open64/osprey1.0/be/lno/forward.cxx,v $ $Revision: 1.1.1.1 $";
+static char *rcs_id = "$Source: /home/bos/bk/kpro64-pending/be/lno/SCCS/s.forward.cxx $ $Revision: 1.5 $";
 #endif /* _KEEP_RCS_ID */
 
 #include <sys/types.h>
@@ -292,10 +296,14 @@ static void BS_Collect_Array(WN* wn_copy,
   OPERATOR opr = WN_operator(wn_copy);
   FmtAssert(opr == OPR_ILOAD || opr == OPR_ISTORE || opr == OPR_LDID
     || opr == OPR_STID,  
-    ("BS_Collect_Array() not called on OPR_ILOAD or OPR_ISTORE")); 
+    ("BS_Collect_Array() not called on OPR_ILOAD(LDID) or OPR_ISTORE(STID)")); 
   INT kid_number = opr == OPR_ILOAD ? 0 : 1;
-  LNO_Build_Access_Array(WN_kid(wn_copy, kid_number), copy_stack,
-    &LNO_default_pool);
+#ifdef KEY //bug 11113: LNO_Build_Access_Array applies only to arrays
+  if((opr == OPR_ILOAD || opr == OPR_ISTORE)
+           && WN_operator(WN_kid(wn_copy, kid_number))==OPR_ARRAY)
+#endif
+       LNO_Build_Access_Array(WN_kid(wn_copy, kid_number), copy_stack,
+                              &LNO_default_pool);
   array_stack->Push(wn_copy);
   position_stack->Push(position);
 }
@@ -557,7 +565,10 @@ static BOOL FS_Worthwhile(WN* wn_orig,
   USE_LIST_ITER iter(use_list);
   DU_NODE* unode = NULL; 
   BOOL found_inner_use = FALSE; 
-  INT use_count = 0;  
+  INT use_count = 0; 
+#ifdef KEY //bug 11786 count total number of uses
+  INT total_use_count = 0;
+#endif 
   for (unode = iter.First(); !iter.Is_Empty(); unode = iter.Next()) { 
     WN *use = unode->Wn(); 
     if (WN_operator(use) != OPR_LDID)
@@ -602,15 +613,23 @@ static BOOL FS_Worthwhile(WN* wn_orig,
     for (wn = use; wn != NULL; wn = LWN_Get_Parent(wn))
       if (WN_operator(wn) == OPR_ARRAY)
 	break;
+#ifdef KEY //bug 11786: count total number of uses
+    total_use_count++;
+#endif
+
     if (wn != NULL) 
       continue; 
     use_count++;  
   }
-  if (use_count == 0) 
+  if (use_count == 0) //no use or all uses under array 
     return FALSE; 
   if (count > FS_LOAD_AND_LEAF_LIMIT && found_inner_use) 
     return FALSE; 
-  if (count > FS_LOAD_AND_LEAF_LIMIT && use_count > 1) 
+#ifdef KEY //bug 11786: let total uses to control code expansion
+  if (count > FS_LOAD_AND_LEAF_LIMIT && total_use_count > 1)
+#else
+  if (count > FS_LOAD_AND_LEAF_LIMIT && use_count > 1)
+#endif
     return FALSE;  
   if (all_uses_in_same_def_loop) {
     if (FS_Exp_Assigned_on_Loop_Iteration(wn_orig, wn_loop,

@@ -1,5 +1,9 @@
 /*
- * Copyright 2003, 2004, 2005 PathScale, Inc.  All Rights Reserved.
+ *  Copyright (C) 2006. QLogic Corporation. All Rights Reserved.
+ */
+
+/*
+ * Copyright 2003, 2004, 2005, 2006 PathScale, Inc.  All Rights Reserved.
  */
 
 /*
@@ -136,7 +140,7 @@
 
 #ifdef _KEEP_RCS_ID
 /*REFERENCED*/
-static char *config_lno_h_rcs_id = "$Source: /proj/osprey/CVS/open64/osprey1.0/common/com/config_lno.h,v $ $Revision: 1.1.1.1 $";
+static char *config_lno_h_rcs_id = "$Source: common/com/SCCS/s.config_lno.h $ $Revision: 1.39 $";
 #endif /* _KEEP_RCS_ID */
 
 #ifdef __cplusplus
@@ -209,6 +213,7 @@ typedef struct lno_flags {
   UINT32 SVR_Skip_After;
   UINT32 SVR_Skip_Equal;
   BOOL   SVR_Phase1;
+  BOOL   SVR;
   UINT32 Unswitch_Skip_Before;
   UINT32 Unswitch_Skip_After;
   UINT32 Unswitch_Skip_Equal;
@@ -221,6 +226,12 @@ typedef struct lno_flags {
   UINT32 Skip_Before;
   UINT32 Skip_After;
   UINT32 Skip_Equal;
+  UINT32 Apo_Skip_Before;
+  UINT32 Apo_Skip_After;
+  UINT32 Apo_Skip_Equal;
+  UINT32 Apo_Loop_Skip_Before;
+  UINT32 Apo_Loop_Skip_After;
+  UINT32 Apo_Loop_Skip_Equal;
   UINT32 Dummy_Skip_Before;
   UINT32 Dummy_Skip_After;
   UINT32 Dummy_Skip_Equal;
@@ -266,6 +277,8 @@ typedef struct lno_flags {
 #ifdef KEY
   BOOL   Prefetch_stores;
   BOOL   Prefetch_stores_set;
+  BOOL   Prefetch_invariant_stride;
+  UINT32 Prefetch_stride_ahead;
 #endif
   UINT32 Prefetch_ahead;
   UINT32 Prefetch_iters_ahead;
@@ -299,6 +312,8 @@ typedef struct lno_flags {
   BOOL    Run_hoistif;
   BOOL    Ignore_Feedback;
   BOOL    Run_unswitch;
+  BOOL    Run_unswitch_phase1;
+  BOOL    Run_unswitch_phase2;
   BOOL 	  Unswitch_Verbose;
   BOOL    Prefetch_Verbose;
   BOOL    Build_Scalar_Reductions;
@@ -316,7 +331,7 @@ typedef struct lno_flags {
   UINT32 Num_Iters;
   UINT32 Pure_Level;
   UINT32 Small_trip_count;
-#ifdef KEY
+#ifdef TARG_IA64
   UINT32 Assume_Unknown_Trip_Count;
 #endif
   UINT32 Local_pad_size;
@@ -325,6 +340,9 @@ typedef struct lno_flags {
   UINT32 Full_unrolling_loop_size_limit;
   BOOL   Full_Unroll_Outer;
   UINT32 Num_Processors;	// 0 means unknown
+  UINT32 Parallel_per_proc_overhead;
+  BOOL Apo_use_feedback;	// APO use loop freq from feedback data to
+  				// decide whether to parallelize a loop
 #endif
   /* This buffer area allows references to new fields to be added in
    * later revisions, from other DSOs, without requiring a new be.so
@@ -388,6 +406,7 @@ extern LNO_FLAGS Initial_LNO;
 #define LNO_SVR_Skip_After	        Current_LNO->SVR_Skip_After
 #define LNO_SVR_Skip_Equal	        Current_LNO->SVR_Skip_Equal
 #define LNO_SVR_Phase1			Current_LNO->SVR_Phase1
+#define LNO_SVR                         Current_LNO->SVR
 #define LNO_Unswitch_Skip_Before	Current_LNO->Unswitch_Skip_Before
 #define LNO_Unswitch_Skip_After	        Current_LNO->Unswitch_Skip_After
 #define LNO_Unswitch_Skip_Equal	        Current_LNO->Unswitch_Skip_Equal
@@ -400,6 +419,12 @@ extern LNO_FLAGS Initial_LNO;
 #define LNO_Skip_Before	                Current_LNO->Skip_Before
 #define LNO_Skip_After	                Current_LNO->Skip_After
 #define LNO_Skip_Equal	                Current_LNO->Skip_Equal
+#define LNO_Apo_Skip_Before	        Current_LNO->Apo_Skip_Before
+#define LNO_Apo_Skip_After	        Current_LNO->Apo_Skip_After
+#define LNO_Apo_Skip_Equal	        Current_LNO->Apo_Skip_Equal
+#define LNO_Apo_Loop_Skip_Before	Current_LNO->Apo_Loop_Skip_Before
+#define LNO_Apo_Loop_Skip_After	        Current_LNO->Apo_Loop_Skip_After
+#define LNO_Apo_Loop_Skip_Equal	        Current_LNO->Apo_Loop_Skip_Equal
 #define LNO_Dummy_Skip_Before	        Current_LNO->Dummy_Skip_Before
 #define LNO_Dummy_Skip_After	        Current_LNO->Dummy_Skip_After
 #define LNO_Dummy_Skip_Equal	        Current_LNO->Dummy_Skip_Equal
@@ -448,6 +473,8 @@ extern LNO_FLAGS Initial_LNO;
 #ifdef KEY
 #define LNO_Prefetch_Stores		Current_LNO->Prefetch_stores
 #define LNO_Prefetch_Stores_Set		Current_LNO->Prefetch_stores_set
+#define LNO_Prefetch_Invariant_Stride   Current_LNO->Prefetch_invariant_stride
+#define LNO_Prefetch_Stride_Ahead       Current_LNO->Prefetch_stride_ahead
 #endif
 
 #define LNO_Prefetch_Ahead		Current_LNO->Prefetch_ahead
@@ -482,6 +509,8 @@ extern LNO_FLAGS Initial_LNO;
 #define LNO_Run_hoistif                 Current_LNO->Run_hoistif
 #define LNO_Ignore_Feedback             Current_LNO->Ignore_Feedback
 #define LNO_Run_Unswitch                Current_LNO->Run_unswitch
+#define LNO_Run_Unswitch_Phase1         Current_LNO->Run_unswitch_phase1
+#define LNO_Run_Unswitch_Phase2         Current_LNO->Run_unswitch_phase2
 #define LNO_Unswitch_Verbose		Current_LNO->Unswitch_Verbose
 #define LNO_Prefetch_Verbose            Current_LNO->Prefetch_Verbose
 #define LNO_Build_Scalar_Reductions     Current_LNO->Build_Scalar_Reductions
@@ -529,6 +558,8 @@ extern LNO_FLAGS Initial_LNO;
 Current_LNO->Full_unrolling_loop_size_limit
 #define LNO_Full_Unroll_Outer           Current_LNO->Full_Unroll_Outer
 #define LNO_Num_Processors              Current_LNO->Num_Processors
+#define LNO_Parallel_per_proc_overhead  Current_LNO->Parallel_per_proc_overhead
+#define LNO_Apo_use_feedback  		Current_LNO->Apo_use_feedback
 #endif
 
 /* Initialize the current top of stack to defaults: */

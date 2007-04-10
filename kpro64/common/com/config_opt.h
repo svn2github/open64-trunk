@@ -1,5 +1,5 @@
 /*
- * Copyright 2003, 2004, 2005 PathScale, Inc.  All Rights Reserved.
+ * Copyright 2003, 2004, 2005, 2006 PathScale, Inc.  All Rights Reserved.
  */
 
 /*
@@ -130,7 +130,8 @@ extern BOOL Optimize_CVTL_Exp;	/* Optimize expansion of CVTL operators */
 extern BOOL Enable_CVT_Opt;	/* Optimize expansion of CVT operators */
 extern BOOL Force_IEEE_Comparisons;	/* IEEE NaN comparisons? */
 extern BOOL Inline_Intrinsics_Early;    /* Inline intrinsics just after VHO */
-extern BOOL Enable_extract_compose;     /* Enable use of the extract/compose whirl ops */
+extern BOOL Enable_extract_bits;     /* Enable use of the extract/compose whirl ops */
+extern BOOL Enable_compose_bits;     /* Enable use of the extract/compose whirl ops */
 
 /***** Miscellaneous optimization options *****/
 extern BOOL OPT_Pad_Common;	/* Do internal common block padding? */
@@ -174,6 +175,14 @@ extern BOOL OPT_Enable_Simp_Fold;
 extern BOOL OPT_Fast_Math;
 extern BOOL OPT_Fast_Stdlib;
 extern BOOL OPT_MP_Barrier_Opt;
+extern BOOL OPT_Icall_Instr;
+extern BOOL OPT_Int_Value_Instr;
+extern BOOL OPT_FP_Value_Instr;
+extern BOOL OPT_Ffast_Math;
+extern BOOL OPT_Funsafe_Math_Optimizations;
+
+extern BOOL OPT_Float_Via_Int;
+extern UINT32 OPT_Malloc_Alg;
 #endif
 #ifdef __cplusplus
 }

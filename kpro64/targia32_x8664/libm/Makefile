@@ -1,10 +1,11 @@
-# -*- Makefile -*-
 #
-#  Copyright 2004, 2005 PathScale, Inc.  All Rights Reserved.
+#  Copyright (C) 2006. QLogic Corporation. All Rights Reserved.
+#
+#  Copyright (C) 2000, 2001 Silicon Graphics, Inc.  All Rights Reserved.
 #
 #  This program is free software; you can redistribute it and/or modify it
-#  under the terms of version 2.1 of the GNU Lesser General Public License 
-#  as published by the Free Software Foundation.
+#  under the terms of version 2 of the GNU General Public License as
+#  published by the Free Software Foundation.
 #
 #  This program is distributed in the hope that it would be useful, but
 #  WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -13,42 +14,49 @@
 #  Further, this software is distributed without any warranty that it is
 #  free of the rightful claim of any third person regarding infringement 
 #  or the like.  Any license provided herein, whether implied or 
-#  otherwise, applies only to this software file.  Patent licenses, if
+#  otherwise, applies only to this software file.  Patent licenses, if 
 #  any, provided herein do not apply to combinations of this program with 
 #  other software, or any other product whatsoever.  
 #
-#  You should have received a copy of the GNU Lesser General Public 
-#  License along with this program; if not, write the Free Software 
-#  Foundation, Inc., 59 Temple Place - Suite 330, Boston MA 02111-1307, 
-#  USA.
+#  You should have received a copy of the GNU General Public License along
+#  with this program; if not, write the Free Software Foundation, Inc., 59
+#  Temple Place - Suite 330, Boston MA 02111-1307, USA.
 #
-#  Contact information:  PathScale, Inc., 2071 Stierlin Court, Suite 200,
-#  Mountain View CA 94043, USA, or:
+#  Contact information:  Silicon Graphics, Inc., 1600 Amphitheatre Pky,
+#  Mountain View, CA 94043, or:
 #
-#  http://www.pathscale.com
+#  http://www.sgi.com
 #
 #  For further information regarding this notice, see:
 #
 #  http://oss.sgi.com/projects/GenInfo/NoticeExplan
+#
+#
+
+#
+#  Makefile for be
+#
 
 #
 #  Define build parameters
 #
+
+OPEN64_NAME_PREFIX = open
 BUILD_AREA     = ..
 BUILD_TOT      = ../..
-BUILD_BASE     = ../../libpscrt
+BUILD_BASE     = ../../libm
 BUILD_ROOTS    = TARGET
-BUILD_ABI      = 64BIT
-BUILD_ARCH     = X8664
+BUILD_ABI      = I32BIT
+BUILD_ARCH     = IA32
 BUILD_TYPE     = SHARED
-BUILD_BOTH     = typically
+BUILD_BOTH     = yes
 BUILD_OPTIMIZE = NODEBUG
-BUILD_VARIANT  = DEFAULT
+BUILD_VARIANT  = LICENSING
 BUILD_INSTALL  = DEFAULT
 BUILD_TARGET   = X8664
 BUILD_COMPILER = GNU
 BUILD_OS       = LINUX
-BUILD_HOST     = IA32
+
 
 #  Include (optional) parameter override file
 -include $(BUILD_AREA)/Makefile.override

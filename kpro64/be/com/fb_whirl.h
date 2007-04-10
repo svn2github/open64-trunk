@@ -1,6 +1,6 @@
 /* -*- c++ -*-
  *
- * Copyright 2003, 2004, 2005 PathScale, Inc.  All Rights Reserved.
+ * Copyright 2003, 2004, 2005, 2006 PathScale, Inc.  All Rights Reserved.
  */
 
 /*
@@ -128,6 +128,9 @@ enum FB_VERIFY_STATUS {
 // ====================================================================
 
 class FEEDBACK {
+#ifdef KEY
+  friend class ARA_LOOP_INFO;
+#endif
 private:
 
   MEM_POOL   *_m;

@@ -1,4 +1,8 @@
 /*
+ *  Copyright (C) 2006. QLogic Corporation. All Rights Reserved.
+ */
+
+/*
  * Copyright 2004, 2005, 2006 PathScale, Inc.  All Rights Reserved.
  */
 
@@ -41,9 +45,9 @@
  * ====================================================================
  *
  * Module: cwh_directive
- * $Revision: 1.1.1.1 $
- * $Date: 2005/10/21 19:00:00 $
- * $Author: marcel $
+ * $Revision: 1.11 $
+ * $Date: 05/09/22 10:54:47-07:00 $
+ * $Author: gautam@jacinth.keyresearch $
  *
  * Description: contains routines to support directives, converting
  *              from Cray IR to WHIRL. Entry points from
@@ -157,7 +161,11 @@ fei_task_var( INTPTR	sym_idx,
 {
   STB_pkt *p;
   WN *wn;
+#ifdef KEY /* Bug 10177 */
+  int op_code = 0;
+#else /* KEY Bug 10177 */
   int op_code;
+#endif /* KEY Bug 10177 */
   ST *st;
   p = cast_to_STB(sym_idx);
   DevAssert((p->form == is_ST),("Odd object ref"));

@@ -71,7 +71,7 @@ extern "C" {
 
 
 #ifdef _KEEP_RCS_ID
-static char *config_host_rcs_id = "$Source: /proj/osprey/CVS/open64/osprey1.0/common/com/config_host.h,v $ $Revision: 1.1.1.1 $";
+static char *config_host_rcs_id = "$Source$ $Revision$";
 #endif /* _KEEP_RCS_ID */
 
 /* What is the byte sex of the host?  Note that the variable

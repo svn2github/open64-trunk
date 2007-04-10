@@ -1,7 +1,7 @@
 //-*-c++-*-
 
 /*
- * Copyright 2003, 2004, 2005 PathScale, Inc.  All Rights Reserved.
+ * Copyright 2003, 2004, 2005, 2006 PathScale, Inc.  All Rights Reserved.
  */
 
 // ====================================================================
@@ -554,6 +554,9 @@ ALIAS_CLASSIFICATION::Base_id(      ST     *const base_st,
     IDTYPE base_id = Preg_num_base_id_map().Lookup(base_ofst);
     if (base_id == (IDTYPE) 0) {
       base_id = New_base_id(base_st, ty);
+      if (Tracing()) {
+	fprintf(TFile, "base_ofst is %lld\n", base_ofst);
+      }
       Preg_num_base_id_map().Insert(base_ofst, base_id);
     }
     return base_id;
@@ -1561,9 +1564,11 @@ ALIAS_CLASSIFICATION::Callee_returns_new_memory(const WN *const call_wn)
 
     // Cheap hack for now, to test performance. This should be based on
     // some real mechanism in the future instead of cheesebag hacks.
-    if ((strcmp("alloca", ST_name(st)) == 0) ||
-        (strcmp("_F90_ALLOCATE", ST_name(st)) == 0) ||
-	WOPT_Enable_Disambiguate_Heap_Obj && PU_has_attr_malloc (Pu_Table[ST_pu(st)])) {
+    if ((strcmp("malloc", ST_name(st)) == 0) ||
+	(strcmp("alloca", ST_name(st)) == 0) ||
+	(strcmp("calloc", ST_name(st)) == 0) ||
+	(strcmp("_F90_ALLOCATE", ST_name(st)) == 0) ||
+        WOPT_Enable_Disambiguate_Heap_Obj && PU_has_attr_malloc (Pu_Table[ST_pu(st)])) {
       return TRUE;
     }
   }

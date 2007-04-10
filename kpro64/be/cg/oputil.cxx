@@ -1,6 +1,10 @@
 /*
+ * Copyright 2002, 2003, 2004, 2005, 2006 PathScale, Inc.  All Rights Reserved.
+ */
 
-  Copyright (C) 2000 Silicon Graphics, Inc.  All Rights Reserved.
+/*
+
+  Copyright (C) 2000, 2001 Silicon Graphics, Inc.  All Rights Reserved.
 
   This program is free software; you can redistribute it and/or modify it
   under the terms of version 2 of the GNU General Public License as
@@ -85,7 +89,10 @@
 #include "cgprep.h"
 #include "cg_loop.h"
 #include "cgtarget.h"
+
+#ifdef TARG_IA64
 #include "targ_sim.h"
+#endif
 
 #include "wn.h"
 #include "whirl2ops.h"
@@ -102,9 +109,9 @@
 #define Set_OP_opnds(o,n)	((o)->opnds = (n))
 #define Set_OP_results(o,n)	((o)->results = (n))
 
-
+#ifdef TARG_IA64
 BOOL
-OP_xfer(OP* op) 
+OP_xfer(OP *op) 
 {
   if(TOP_is_xfer(OP_code(op))) 
     return TRUE;
@@ -161,7 +168,7 @@ OP_def_ar_lc(OP *op)
   if(TN_is_constant(res_tn)) return FALSE;
   return TN_is_lc_reg(res_tn);
 }
-
+#endif
 
 // ----------------------------------------
 // Copy ASM_OP_ANNOT when duplicating an OP
@@ -185,9 +192,9 @@ Copy_Asm_OP_Annot(OP* new_op, OP* op)
  */
 
 static OP *
-New_OP ( INT results, INT opnds, INT hidden_opnds)
+New_OP ( INT results, INT opnds )
 {
-  OP *op = OP_Alloc (OP_sizeof (results, opnds+hidden_opnds));
+  OP *op = OP_Alloc ( OP_sizeof(results, opnds) );
   PU_OP_Cnt++;
   Set_OP_opnds(op, opnds);
   Set_OP_results(op, results);
@@ -209,8 +216,7 @@ Dup_OP ( OP *op )
 {
   INT results = OP_results(op);
   INT opnds = OP_opnds(op);
-  INT hidden_opnds = CGTARG_Max_Number_of_Hidden_Opnd (OP_code(op)); 
-  OP *new_op = New_OP (results, opnds, hidden_opnds);
+  OP *new_op = New_OP ( results, opnds );
 
   memcpy(new_op, op, OP_sizeof(results, opnds));
   new_op->next = new_op->prev = NULL;
@@ -221,6 +227,10 @@ Dup_OP ( OP *op )
 	Set_OP_Tag (new_op, Gen_Tag());
   }
   
+#ifdef TARG_X8664
+  if ( TOP_is_vector_high_loadstore ( OP_code ( new_op ) ) )
+    Set_OP_cond_def_kind(new_op, OP_ALWAYS_COND_DEF);
+#endif
   return new_op;
 }
 
@@ -806,7 +816,7 @@ Mk_OP(TOP opr, ...)
   INT i;
   INT results = TOP_fixed_results(opr);
   INT opnds = TOP_fixed_opnds(opr);
-  OP *op = New_OP(results, opnds, CGTARG_Max_Number_of_Hidden_Opnd(opr));
+  OP *op = New_OP(results, opnds);
 
   FmtAssert(!TOP_is_var_opnds(opr), ("Mk_OP not allowed with variable operands"));
 
@@ -829,6 +839,49 @@ Mk_OP(TOP opr, ...)
 
   CGTARG_Init_OP_cond_def_kind(op);
 
+#if Is_True_On
+#ifdef TARG_X8664
+  // Make sure no 64-bit int operations for n32 will be generated.
+  if( Is_Target_32bit() &&
+      !OP_dummy( op )   &&
+      !OP_simulated(op) &&
+      !OP_cond_move(op) &&
+      OP_code(op) != TOP_leave ){
+
+    for( int i = 0; i < OP_results(op); i++ ){
+      TN* tn = OP_result( op, i );
+      if( tn != NULL && 
+	  OP_result_size( op, i ) > 32 &&
+	  TN_register_class(tn) == ISA_REGISTER_CLASS_integer ){
+	FmtAssert( FALSE, ("i386 does not support 64-bit operation -- %s",
+			   TOP_Name(opr) ) );
+      }
+    }
+
+    const int base_idx = OP_find_opnd_use( op, OU_base );
+    const int index_idx = OP_find_opnd_use( op, OU_index );
+    const int target_idx = OP_find_opnd_use( op, OU_target );
+
+    for( int i = 0; i < OP_opnds(op); i++ ){
+      TN* tn = OP_opnd( op, i );
+      if( tn != NULL     &&
+	  i != base_idx  &&
+	  i != index_idx &&
+	  i != target_idx&&
+	  OP_opnd_size( op, i ) > 32 &&
+	  TN_register_class(tn) == ISA_REGISTER_CLASS_integer ){
+	FmtAssert( FALSE, ("i386 does not support 64-bit operation -- %s",
+			   TOP_Name(opr) ) );
+      }
+    }
+  }
+#endif // TARG_X8664
+#endif // Is_True_On
+
+#ifdef TARG_X8664
+  if ( TOP_is_vector_high_loadstore ( OP_code ( op ) ) )
+    Set_OP_cond_def_kind(op, OP_ALWAYS_COND_DEF);
+#endif
   return op;
 }
 
@@ -845,7 +898,7 @@ Mk_VarOP(TOP opr, INT results, INT opnds, TN **res_tn, TN **opnd_tn)
   }
 
   INT i;
-  OP *op = New_OP(results, opnds, CGTARG_Max_Number_of_Hidden_Opnd(opr));
+  OP *op = New_OP(results, opnds);
 
   Set_OP_code(op, opr);
 
@@ -875,8 +928,16 @@ void Print_OP_No_SrcLine(const OP *op)
   INT16 i;
   WN *wn;
   BOOL cg_loop_op = Is_CG_LOOP_Op(op);
+#ifdef TARG_IA64
+  //#ifdef Ipfec
   if (OP_start_bundle(op)) fprintf( TFile, " }\n{\n");
+  //#endif Ipfec
   fprintf (TFile, "[%3d] ", OP_map_idx(op));
+#endif
+#ifdef TARG_X8664
+  fprintf (TFile, "[%4d] ", OP_scycle(op) );
+#endif
+  fprintf (TFile, "[%4d] ", Srcpos_To_Line(OP_srcpos(op)));
   if (OP_has_tag(op)) {
 	LABEL_IDX tag = Get_OP_Tag(op);
 	fprintf (TFile, "<tag %s>: ", LABEL_name(tag));
@@ -887,9 +948,11 @@ void Print_OP_No_SrcLine(const OP *op)
   }
   fprintf(TFile, ":- ");
   fprintf(TFile, "%s ", TOP_Name(OP_code(op)));
+#ifdef TARG_IA64
   if ( OP_variant(op) != 0 ) {
     fprintf ( TFile, "(%x) ", OP_variant(op));
   }
+#endif
   for (i=0; i<OP_opnds(op); i++) {
     TN *tn = OP_opnd(op,i);
     Print_TN(tn,FALSE);
@@ -917,15 +980,21 @@ void Print_OP_No_SrcLine(const OP *op)
   if (OP_no_move_before_gra(op)) fprintf (TFile, " no_move");
   if (OP_spadjust_plus(op)) fprintf (TFile, " spadjust_plus");
   if (OP_spadjust_minus(op)) fprintf (TFile, " spadjust_minus");
+#ifdef TARG_IA64
   if (OP_Scheduled(op)) fprintf (TFile, " scheduled");
   if (OP_start_bundle(op)) fprintf (TFile, " start_bundle");
   if (OP_safe_load(op)) fprintf (TFile, " safe_load");
+#endif
 
   if (wn = Get_WN_From_Memory_OP(op)) {
     char buf[500];
     buf[0] = '\0';
     if (Alias_Manager) Print_alias_info (buf, Alias_Manager, wn);
+#ifdef TARG_X8664
+    fprintf(TFile, " WN %s", buf);
+#else
     fprintf(TFile, " WN=0x%p %s", wn, buf);
+#endif
   }
   if (OP_unrolling(op)) {
     UINT16 unr = OP_unrolling(op);
@@ -1019,6 +1088,19 @@ OP_Refs_Reg(const OP *op, ISA_REGISTER_CLASS cl, REGISTER reg)
     }
   }
 
+#ifdef KEY
+  if( OP_cond_def( op ) ){
+    for ( num = 0; num < OP_results(op); num++ ) {
+      TN* result_tn = OP_result( op, num );
+      if (TN_is_register(result_tn)          &&
+	  TN_register_class(result_tn) == cl &&
+	  TN_register(result_tn) == reg ) {
+	return TRUE;
+      }      
+    }
+  }
+#endif
+
   /* if we made it here, we must not have found it */
   return FALSE;
 }
@@ -1048,6 +1130,7 @@ OP_Defs_TN(const OP *op, const struct tn *res)
   return( FALSE );
 }
 
+
 /* ====================================================================
  *
  * OP_Refs_TN
@@ -1068,9 +1151,19 @@ OP_Refs_TN( const OP *op, const struct tn *opnd )
     }
   }
 
+#ifdef KEY
+  if( OP_cond_def( op ) ){
+    for ( num = 0; num < OP_results(op); num++ ) {
+      if( OP_result( op, num ) == opnd )
+	return TRUE;
+    }
+  }
+#endif
+
   /* if we made it here, we must not have found it */
   return( FALSE );
 }
+
 
 /* ====================================================================
  *
@@ -1225,14 +1318,18 @@ BOOL OP_has_implicit_interactions(OP *op)
  */
 void OP_Base_Offset_TNs(OP *memop, TN **base_tn, TN **offset_tn)
 {
-  Is_True(OP_memory(memop) , ("not a memory op"));
+#ifdef TARG_X8664
+  Is_True(OP_load(memop) || OP_load_exe(memop) || OP_store(memop), ("not a load or store"));
+#else
+  Is_True(OP_load(memop) || OP_store(memop), ("not a load or store"));
+#endif
 
   INT offset_num = OP_find_opnd_use (memop, OU_offset);
   INT base_num   = OP_find_opnd_use (memop, OU_base);
 
   *offset_tn = NULL;
 
-  *base_tn = OP_opnd(memop, base_num);
+  *base_tn = base_num >= 0 ? OP_opnd(memop, base_num) : NULL;
 
   // <offset> TNs are not part of <memop>. Find the definining OP_iadd
   // instruction which sets the offset and matches the base_tn.
@@ -1253,6 +1350,7 @@ void OP_Base_Offset_TNs(OP *memop, TN **base_tn, TN **offset_tn)
   }
 }
 
+#ifdef TARG_IA64
 /* ====================================================================
  * OP_ld_st_unat
  *
@@ -1312,35 +1410,80 @@ BOOL OP_use_return_value (OP* op) {
     return FALSE;
 }
 
-/* Add hidden operands to given op. All hidden operands should be added at one time.
+#endif // TARG_IA64
+
+#ifdef KEY
+/* ====================================================================
+ *
+ * TN_Pair_In_OP
+ *
+ * See interface description.
+ *
+ * ====================================================================
  */
-void
-Add_Hidden_Operands (OP* op, const vector<TN*>& hopnds) {
-    if (hopnds.size () == 0) return;
 
-    INT t = CGTARG_Max_Number_of_Hidden_Opnd (OP_code(op));
-    Is_True (t > 0,  ("Op does not have hidden openrands"));
-    Is_True (hopnds.size() <= t, ("Expected at most %d hidden operands"));
-    Is_True (OP_hidden_opnds(op) == 0, ("Hidden operands are added once"));
-
-    // leave room for hidden operands   
-    if (OP_results(op) != 0) {
-       INT32 from_idx = op->opnds+op->results - 1;
-       INT32 to_idx = from_idx + hopnds.size();
-       for (INT32 count = OP_results(op); count > 0; count--) {
-         op->res_opnd[to_idx--] = op->res_opnd[from_idx--];
-       } 
+BOOL 
+TN_Pair_In_OP(OP* op, struct tn *tn_res, struct tn *tn_opnd) 
+{
+  INT i;
+  for (i = 0; i < OP_results(op); i++) {
+    if (tn_res == OP_result(op,i)) {
+      break; 
     }
-
-    // now interpose the hidden operands between operands and results.
-    for (INT32 i = 0; i < hopnds.size (); ++i) {
-       op->res_opnd[op->opnds+i] = hopnds[i]; 
+  }
+  if (i == OP_results(op)) {
+    // If tn_res has an assigned register, check if it matches a result.  (This
+    // changes the semantics of TN_Pair_In_OP, but that's ok since the only
+    // user of TN_Pair_In_OP is LRA, which wants this check.)  Bug 9489.
+    BOOL result_match = FALSE;
+    if (TN_register(tn_res) != REGISTER_UNDEFINED) {
+      for (int j = 0; j < OP_results(op); j++) {
+        TN *res = OP_result(op, j);
+	if (TN_register_and_class(res) == TN_register_and_class(tn_res)) {
+	  result_match = TRUE;
+	}
+      }
     }
-
-    op->hidden_opnds = hopnds.size();
-    op->opnds += hopnds.size ();
+    if (!result_match)
+      return FALSE;
+  }
+  for (i = 0; i < OP_opnds(op); i++) {
+    if (tn_opnd == OP_opnd(op,i)) {
+      return TRUE; 
+    }
+  }
+  return FALSE;
 }
 
+/* ====================================================================
+ *
+ * TN_Resnum_In_OP
+ *
+ * See interface description.
+ *
+ * ====================================================================
+ */
+
+INT 
+TN_Resnum_In_OP (OP* op, struct tn *tn, BOOL match_assigned_reg) 
+{
+  for (INT i = 0; i < OP_results(op); i++) {
+    TN *res = OP_result(op, i);
+    if (tn == res) {
+      return i;
+    }
+
+    if (match_assigned_reg &&
+	TN_register(res) != REGISTER_UNDEFINED &&
+	TN_register_and_class(res) == TN_register_and_class(tn)) {
+      return i;
+    }
+  }
+  FmtAssert (FALSE,
+             ("TN_resnum_in_OP: Could not find <tn> in results list\n"));
+  return -1;
+}
+#endif
 
 /* Is <op> a copy from a callee-saves register into its save-TN?
  */

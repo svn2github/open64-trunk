@@ -326,7 +326,6 @@ LOOP_DESCR_Detect_Loops (MEM_POOL *pool)
   return the_loops;
 }
 
-
 static void
 LOOP_DESCR_Add_BB_Helper (LOOP_DESCR *loop, BB *bb) {
 
@@ -348,7 +347,7 @@ LOOP_DESCR_Add_BB(LOOP_DESCR *loop, BB *bb)
 	    ("BB:%d already in a loop", BB_id(bb)));
 
   BB_MAP_Set(LOOP_DESCR_map, bb, loop);
-    
+
   LOOP_DESCR_Add_BB_Helper (loop, bb);
 }
 

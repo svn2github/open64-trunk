@@ -1,5 +1,9 @@
 /*
- * Copyright 2002, 2003, 2004, 2005 PathScale, Inc.  All Rights Reserved.
+ *  Copyright (C) 2006. QLogic Corporation. All Rights Reserved.
+ */
+
+/*
+ * Copyright 2002, 2003, 2004, 2005, 2006 PathScale, Inc.  All Rights Reserved.
  */
 
 /*
@@ -37,7 +41,7 @@
 */
 
 
-static char *rcs_id = "$Source: /proj/osprey/CVS/open64/osprey1.0/driver/main.c,v $ $Revision: 1.1.1.1 $";
+static char *rcs_id = "$Source: driver/SCCS/s.main.c $ $Revision: 1.109 $";
 
 #include <ctype.h>
 #include <stdio.h>
@@ -49,6 +53,7 @@ static char *rcs_id = "$Source: /proj/osprey/CVS/open64/osprey1.0/driver/main.c,
 #include <sys/stat.h>
 #include <errno.h>
 #include <time.h>
+#include <unistd.h>
 #include "pathscale_defs.h"
 #include "string_utils.h"
 #include "options.h"
@@ -85,10 +90,13 @@ static void check_makedepend_flags (void);
 static void mark_used (void);
 static void dump_args (char *msg);
 static void print_help_msg (void);
-static void print_defaults (void);
+static void print_defaults (int argc, char *argv[]);
 static void append_default_options (int *argc, char *(*argv[]));
-static void append_psc_genflags (int *argc, char *(*argv[]));
+#ifdef PSC_TO_OPEN64
+static void append_open64_env_flags (int *argc, char *(*argv[]), char *env_var);
+#endif
 static void print_search_path (void);
+static void display_version (boolean dump_version_only);
 
 static string_list_t *files;
 static string_list_t *file_suffixes;
@@ -126,17 +134,21 @@ main (int argc, char *argv[])
 	char *unrecognized_dashdash_option_name = NULL;
 #endif
 
-	/* Add the contents of PSC_GENFLAGS to the command line */
-	append_psc_genflags(&argc, &argv);
+	init_error_list();
+	program_name = drop_path(argv[0]);	/* don't print path */
+	orig_program_name = string_copy(argv[0]);
+        file_utils_set_program_name(orig_program_name);
+
+	/* Add the contents of OPEN64_GENFLAGS to the command line */
+	#ifdef PSC_TO_OPEN64
+	append_open64_env_flags(&argc, &argv, "OPEN64_GENFLAGS");
+	#endif
 
 	// Append the default options in compiler.defaults to argv so that they
 	// are parsed along with the command line options.
 	append_default_options(&argc, &argv);
 
 	save_command_line(argc, argv);		/* for prelinker    */	
-	program_name = drop_path(argv[0]);	/* don't print path */
-	orig_program_name = string_copy(argv[0]);
-        file_utils_set_program_name(orig_program_name);
 	files = init_string_list();
 	file_suffixes = init_string_list();
 	feedback_files = init_string_list ();	/* for cord feedback files */
@@ -144,11 +156,22 @@ main (int argc, char *argv[])
 	init_temp_files();
 	init_crash_reporting();
 	init_count_files();
-	init_error_list();
 	init_option_seen();
 	init_objects();
 
 	invoked_lang = get_named_language(program_name);
+
+	/* Add the contents of OPEN64_CFLAGS, OPEN64_CXXFLAGS, OPEN64_FFLAGS to the
+	   command line.  Bug 7646. */
+	#ifdef PSC_TO_OPEN64
+	if (invoked_lang == L_cc)
+	  append_open64_env_flags(&argc, &argv, "OPEN64_CFLAGS");
+	else if (invoked_lang == L_CC)
+	  append_open64_env_flags(&argc, &argv, "OPEN64_CXXFLAGS");
+	else if (invoked_lang == L_f77 || invoked_lang == L_f90)
+	  append_open64_env_flags(&argc, &argv, "OPEN64_FFLAGS");
+	#endif
+
 	check_for_driver_controls (argc, argv);
 
 	/* Try to find where the compiler is located and set the phase
@@ -195,7 +218,6 @@ main (int argc, char *argv[])
 			flag = get_option(&i, argv);
 			if (flag == O_Unrecognized) { 
 				if (print_warnings) {
-#ifdef KEY
 				    // For unrecognized dashdash options, delay
 				    // giving error message until we know
 				    // pathcc is not called as a linker.  If
@@ -206,10 +228,17 @@ main (int argc, char *argv[])
 				    if (!strncmp(option_name, "--", 2)) {
 				      unrecognized_dashdash_option_name =
 				        option_name;
-				    } else
-#endif
-				    /* print as error or not at all? */
-				    parse_error(option_name, "unknown flag");
+				    }
+				    else if (option_was_seen(O_compat_gcc) ||
+					#ifdef PSC_TO_OPEN64
+					     getenv("OPEN64_STRICT_GCC")) {
+					#endif
+				      /* leave this env var undocumented */
+				      warning("unknown flag: %s", option_name);
+				    } else {
+				      /* print as error or not at all? */
+				      parse_error(option_name, "unknown flag");
+				    }
 				}
 			}
 			else {
@@ -231,6 +260,15 @@ main (int argc, char *argv[])
 			}
 
 			drop_option = FALSE;
+
+#ifdef KEY
+			// Drop IPA options if IPA was turned off due to
+			// options conflict.  Bug 11571.
+			if (ipa == FALSE &&
+			    base_flag == O_IPA_) {
+			  drop_option = TRUE;
+			} else
+#endif
 			// Sets drop_option to TRUE if option should be ignored.
 			opt_action(base_flag);
 
@@ -311,29 +349,33 @@ main (int argc, char *argv[])
 	/* Check target specifications for consistency: */
 	Check_Target ();
 
-	if (dump_version) {
-	    if (option_was_seen(O_compat_gcc))
-		puts(PSC_GCC_VERSION);
-	    else
-		puts(PSC_FULL_VERSION);
-	}
+    if (dump_version) {
+        if (option_was_seen(O_compat_gcc))
+	 #ifdef PSC_TO_OPEN64
+        puts(OPEN64_GCC_VERSION);
+        else
+        puts(OPEN64_FULL_VERSION);
+	 #endif
+    }
 
         if (show_version) {
             fprintf(stderr, "Open64 Compiler Suite: "
-		    "Version %s\n", compiler_version);
-	    if (show_version > 1) {
-		fprintf(stderr, "ChangeSet: %s (%s)\n", cset_rev, cset_key);
-		fprintf(stderr, "Built by: %s@%s in %s\n", build_user,
-			build_host, build_root);
-	    }
+            "Version %s\n", compiler_version);
+        if (show_version > 1) {
+        fprintf(stderr, "ChangeSet: %s\n", cset_id);
+        fprintf(stderr, "Built by: %s@%s in %s\n", build_user,
+            build_host, build_root);
+        }
             fprintf(stderr, "Built on: %s\n", build_date);
-            fprintf(stderr, "Thread model: posix\n");	// Bug 4608.
+            fprintf(stderr, "Thread model: posix\n");   // Bug 4608.
+#ifdef PSC_TO_OPEN64
 #if defined(TARG_IA64)
-            fprintf(stderr, "GNU gcc version " PSC_GCC_VERSION
-					  " (Open64 " PSC_FULL_VERSION " driver)\n");
-#else 
-            fprintf(stderr, "GNU gcc version " PSC_GCC_VERSION
-                    " (PathScale " PSC_FULL_VERSION " driver)\n");
+            fprintf(stderr, "GNU gcc version " OPEN64_GCC_VERSION
+                      " (Open64 " OPEN64_FULL_VERSION " driver)\n");
+#else
+            fprintf(stderr, "GNU gcc version " OPEN64_GCC_VERSION
+                    " (Open64 " OPEN64_FULL_VERSION " driver)\n");
+#endif
 #endif
         }
 	if (show_copyright) {
@@ -343,20 +385,21 @@ main (int argc, char *argv[])
 
 	    fprintf(stderr, "Copyright 2000, 2001 Silicon Graphics, Inc.  "
 		    "All Rights Reserved.\n");
-	    fprintf(stderr, "Copyright 2002, 2003, 2004, 2005 PathScale, Inc.  "
-		    "All Rights Reserved.\n");
+	    fprintf(stderr, "Copyright 2002, 2003, 2004, 2005, 2006 PathScale, Inc.  All Rights Reserved.\n");
 
 	    fprintf(stderr, "See complete copyright, patent and legal notices "
 		    "in the\n");
-	    fprintf(stderr, "%.*s/share/doc/pathscale-compilers-" 
-	    	    PSC_FULL_VERSION "/LEGAL.pdf file.\n",
+	#ifdef PSC_TO_OPEN64
+	    fprintf(stderr, "%.*s/share/doc/open64-" 
+	    	    OPEN64_FULL_VERSION "/LEGAL.pdf file.\n",
 		    (int)(strlen(exe_dir) - 4), exe_dir);
+	#endif
 	}
 	if (show_search_path) {
 		print_search_path();
 	}
 	if (show_defaults) {
-	  print_defaults();
+	  print_defaults(argc, argv);
 	}
 
 	if (argc == 1)
@@ -369,11 +412,8 @@ main (int argc, char *argv[])
 	{
 		print_help_msg();
 	}
-	if ( ! execute_flag && ! show_flag) {
+	if ( ! execute_flag && ! show_flag && ! dump_version) {
 		do_exit(RC_OKAY);	/* just exit */
-	}
-	if (dump_version) {
-		do_exit(RC_OKAY);
 	}
 	if (source_kind == S_NONE || read_stdin) {
 		if (read_stdin) {
@@ -394,8 +434,8 @@ main (int argc, char *argv[])
 				add_object (O_object, obj_name);
 			}
 		}
-		else if (show_version) {	/* just exit */
-			do_exit(RC_OKAY);
+		else if (show_version || dump_version) {
+			// do nothing
 		}
 		else {
 			no_args();
@@ -421,13 +461,22 @@ main (int argc, char *argv[])
 	  error("unimplemented: code model medium not supported in PIC mode");
 	}
 #ifdef KEY
-	if (option_was_seen(O_trapuv) &&
-	    abi == ABI_N32 &&
-	    !option_was_seen(O_msse2)) {
-	  // Don't support -trapuv for x87 because the processor would trap
-	  // while storing NaN to local vars using "fstpl".  Bug 5920.
-	  warning("-trapuv not supported for 32-bit ABI without SSE2; disabling -trapuv");
-	  set_option_unseen(O_trapuv);
+	// bug 10620
+	if (mem_model != M_SMALL &&
+	    abi == ABI_N32) {
+	  error("code model \"%s\" not support in 32-bit mode", mem_model_name);
+	}
+	// bug 9066
+	if (option_was_seen(O_static) &&
+	    mem_model != M_SMALL) {
+	  error("-static can only be used with -mcmodel=small");
+	}
+	// bug 10031
+	if (option_was_seen(O_static_data) &&
+	    mpkind == NORMAL_MP) {
+	  warning("-static-data specified with -mp can cause incorrect "
+		  "execution if a routine with static data is called from a "
+		  "parallel region.");
 	}
 #endif
 
@@ -459,6 +508,45 @@ main (int argc, char *argv[])
 
 	/* add defaults if not already set */
 	set_defaults();
+
+#ifdef KEY
+        // Perform GNU4-related checks after set_defaults has run, since
+        // set_defaults can change gnu_version.  Bug 10250.
+        if (gnu_version == 4) {
+          if (option_was_seen(O_fwritable_strings) ||
+              option_was_seen(O_fno_writable_strings)) {
+            warning("ignored -fwritable-strings/-fno-writable-strings because"
+                    " option not supported under GNU GCC 4");
+            set_option_unseen(O_fwritable_strings);
+            set_option_unseen(O_fno_writable_strings);
+          }
+          if ((source_lang == L_cc ||
+               source_lang == L_CC) &&
+              option_was_seen(O_mp)) {  // bug 11896
+            warning("ignored -mp because option not yet supported under"
+                    " GNU GCC 4");
+            set_option_unseen(O_mp);
+          }
+        } else {        // not GNU 4
+          if (option_was_seen(O_fgnu_exceptions) ||     // bug 11732
+              option_was_seen(O_fno_gnu_exceptions)) {
+            warning("ignored -fgnu-exceptions/-fno-gnu-exceptions because"
+                    " option is for GNU GCC 4 only");
+            set_option_unseen(O_fgnu_exceptions);
+            set_option_unseen(O_fno_gnu_exceptions);
+            gnu_exceptions = UNDEFINED;
+          }
+        }
+#endif
+
+	// Display version after running set_defaults, which can change
+	// gnu_version.
+        if (show_version || dump_version) {
+	  display_version(dump_version);
+	  if (!execute_flag ||
+	      source_kind == S_NONE)
+	    do_exit(RC_OKAY);
+	}
 
 	if (num_files > 1) {
 		multiple_source_files = TRUE;
@@ -534,6 +622,11 @@ main (int argc, char *argv[])
 	for (p = files->head, q=file_suffixes->head; p != NULL; p = p->next, q=q->next) 
 	{
 		source_file = p->name;
+#ifdef KEY
+		run_inline = UNDEFINED;	// bug 11325
+
+		if (show_flag == TRUE)	// bug 9096
+#endif
 		if (multiple_source_files) {
 			fprintf(stderr, "%s:\n", source_file);
 		}
@@ -616,9 +709,11 @@ static void set_executable_dir (void) {
   ldir = drop_path (dir);
   if (strcmp (ldir, "bin") == 0) {
     char *basedir = directory_path (dir);
-    substitute_phase_dirs ("/usr/lib", basedir, "/lib/" PSC_FULL_VERSION);
-    substitute_phase_dirs ("/usr/lib/" PSC_NAME_PREFIX "cc-lib",
-			   basedir, "/lib/" PSC_FULL_VERSION);
+#ifdef PSC_TO_OPEN64
+    substitute_phase_dirs ("/usr/lib", basedir, "/lib/" OPEN64_FULL_VERSION);
+    substitute_phase_dirs ("/usr/lib/" OPEN64_NAME_PREFIX "cc-lib",
+			   basedir, "/lib/" OPEN64_FULL_VERSION);
+#endif
     substitute_phase_dirs ("/usr/include", basedir, "/include");
     return;
   }
@@ -631,14 +726,18 @@ static void set_executable_dir (void) {
       ldir = substring_copy (dir, 0, ldir+4-dir);
       substitute_phase_dirs ("/usr/bin", dir, "");
       substitute_phase_dirs ("/usr/lib", ldir, "");
-      substitute_phase_dirs ("/usr/lib/" PSC_NAME_PREFIX "cc-lib", dir, "");
+#ifdef PSC_TO_OPEN64
+      substitute_phase_dirs ("/usr/lib/" OPEN64_NAME_PREFIX "cc-lib", dir, "");
+#endif
       substitute_phase_dirs ("/usr/include", dir, "/include");
     } else if (ldir[12] == '\0') {
       /* directly in gcc-lib */
       ldir = substring_copy (dir, 0, ldir+4-dir);
       substitute_phase_dirs ("/usr/bin", dir, "");
       substitute_phase_dirs ("/usr/lib", ldir, "");
-      substitute_phase_dirs ("/usr/lib/" PSC_NAME_PREFIX "cc-lib", dir, "");
+#ifdef PSC_TO_OPEN64
+      substitute_phase_dirs ("/usr/lib/" OPEN64_NAME_PREFIX "cc-lib", dir, "");
+#endif
       substitute_phase_dirs ("/usr/include", dir, "/include");
     }
     return;
@@ -766,7 +865,7 @@ print_help_msg (void)
 		}
 	}
 	if (help_pattern == NULL && invoked_lang == L_cc) {
-	  fprintf(stderr, "The environment variable PSC_CC is also checked\n");
+	  fprintf(stderr, "The environment variable OPEN64_CC is also checked\n");
 	}
 	do_exit(RC_OKAY);
 }
@@ -802,6 +901,9 @@ dump_args (char *msg)
  */
 void do_exit(int code)
 {
+#ifdef KEY	// Bug 6678.
+	unlink(get_report_file_name());
+#endif
 	if (code != 0) {
 		code = 1;
 	}
@@ -857,25 +959,65 @@ void set_explicit_lang(const char *flag, const char *lang)
 static void
 prescan_options (int argc, char *argv[])
 {
+  char *ipa_conflict_option = NULL;
   int i;
+
   for (i = 1; i < argc; i++) {
     if (!strcasecmp(argv[i], "-ipa") ||
 	!strcmp(argv[i], "-Ofast")) {	// -Ofast implies -ipa.  Bug 3856.
       ipa = TRUE;
-    } else if (strcmp(argv[i], "-keep") == 0) {	// bug 2181
+    } else if (!strcmp(argv[i], "-keep")) {	// bug 2181
       keep_flag = TRUE;
-    } else if (strcmp(argv[i], "-save_temps") == 0) {
+    } else if (!strcmp(argv[i], "-save_temps")) {
       keep_flag = TRUE;
-    } else if (strcmp(argv[i], "-compat-gcc") == 0) {
+    } else if (!strcmp(argv[i], "-compat-gcc")) {
       compat_gcc = TRUE;
+    } else if (!strcmp(argv[i], "-S")) {
+      ipa_conflict_option = argv[i];
+    } else if (!strcmp(argv[i], "-fbgen")) {
+      ipa_conflict_option = argv[i];
+    } else if (argv[i][0] == '-' && argv[i][1] == 'g') {	// -g...
+      if (!strcmp(argv[i], "-g") ||
+	  !strcmp(argv[i], "-g1") ||
+	  !strcmp(argv[i], "-g2") ||
+	  !strcmp(argv[i], "-g3") ||
+	  !strcmp(argv[i], "-gdwarf-2") ||
+	  !strcmp(argv[i], "-gdwarf-21") ||
+	  !strcmp(argv[i], "-gdwarf-22") ||
+	  !strcmp(argv[i], "-gdwarf-23") ||
+	  !strcmp(argv[i], "-ggdb") ||
+	  !strcmp(argv[i], "-ggdb3")) {
+	ipa_conflict_option = argv[i];
+      }
+    }
+  }
+
+  // Turn off IPA for certain flag combinations.  Must turn off IPA before
+  // adding objects because the objects' suffix depends on whether IPA is
+  // invoked.  Bug 7879.
+  if (ipa &&
+      ipa_conflict_option != NULL) {
+    char msg[200];
+    for (i = 1; i < argc; i++) {
+      if (!strcasecmp(argv[i], "-ipa") ||
+	  !strcmp(argv[i], "-Ofast")) {
+	sprintf(msg, "%s %s combination not allowed, replaced with %s",
+		argv[i], ipa_conflict_option, ipa_conflict_option);
+	warning(msg);
+	ipa = FALSE;
+	argv[i] = "-dummy";
+      }
     }
   }
 }
 
 static void
-print_defaults()
+print_defaults(int argc, char *argv[])
 {
-  fprintf(stderr, "Compiler defaults (truncated): ");
+  int i;
+  boolean parsing_defaults;
+
+  fprintf(stderr, "Optimization level and compilation target:\n  ");
 
   // -O level
   if (olevel == UNDEFINED)
@@ -897,47 +1039,143 @@ print_defaults()
   }
 
   // SSE, SSE2, SSE3, 3DNow
-  fprintf(stderr, " -msse=on");
-  fprintf(stderr, " -msse2=%s", sse2 == TRUE ? "on" : "off");
-  fprintf(stderr, " -msse3=%s", sse3 == TRUE ? "on" : "off");
-  fprintf(stderr, " -m3dnow=%s", m3dnow == TRUE ? "on" : "off");
+  fprintf(stderr, " -msse");
+  fprintf(stderr, " %s", sse2 == TRUE ? "-msse2" : "-mno-sse2");
+  fprintf(stderr, " %s", sse3 == TRUE ? "-msse3" : "-mno-sse3");
+  fprintf(stderr, " %s", m3dnow == TRUE ? "-m3dnow" : "-mno-3dnow");
 
+  // -gnu3/-gnu4
+  if ((invoked_lang == L_cc ||
+       invoked_lang == L_CC) &&
+      !is_toggled(gnu_version)) {
+    int gcc_version = get_gcc_major_version();
+    if (gcc_version == 3 ||
+	gcc_version == 4) {
+      fprintf(stderr, " -gnu%d", gcc_version);
+    } else {
+      internal_error("print_defaults: unknown GCC version %d\n", gcc_version);
+    }
+  }
+
+  fprintf(stderr, "\n");
+
+  // Print options from compiler.defaults file.
+  fprintf(stderr, "Options from compiler.defaults file:\n  ");
+  parsing_defaults = FALSE;
+  for (i = 0; i < argc; i++) {
+    if (!strcmp(argv[i], "-default_options")) {
+      parsing_defaults = TRUE;
+    } else if (parsing_defaults == TRUE) {
+      fprintf(stderr, " %s", argv[i]);
+    }
+  }
   fprintf(stderr, "\n");
 }
 
 static int
 read_compiler_defaults(FILE *f, string_list_t *default_options_list)
 {
+  const int max_len = 1000;
+  char *p, buf[max_len];		// p indexes through buf
+  char *q, option[max_len];		// q indexes through option
   int count = 0;
-  char *p, *string, buf[1000];
-  while (fgets(buf, 999, f) != NULL) {
-    // Parse one line.  Ignore anything after '#'.
-    string = NULL;
+  int line = 0;
+  boolean in_single_quotes = FALSE;
+  boolean in_double_quotes = FALSE;
+  boolean follows_escape_char = FALSE;
+  boolean in_comment = FALSE;
+
+  // Scan the input buffer to build the options.
+  option[0] = '\0';
+  q = option;	// While building the option string, put the next char at *q.
+  while (fgets(buf, max_len, f) != NULL) {
     boolean end_of_line = FALSE;
-    for (p = buf; ; p++) {
-      // Detect end of line.
-      if (*p == '#' || *p == '\n' || *p == '\0') {
-	end_of_line = TRUE;
-	*p = '\0';		// Treat '#' same as '\0'.
-      }
-      if (*p == ' ' || *p == '\t' || *p == '\0') {
-	// White space or end of line.  Save the option just seen if any.
-        if (string != NULL) {
-	  *p = '\0';
-	  add_string(default_options_list, string);
-	  count++;
-	  string = NULL;
+    boolean continuation = FALSE;	// '\' at end of line
+    line++;
+
+    // Parse one line.
+    for (p = buf; *p != '\0' && !end_of_line; p++) {
+      boolean add_new_option = FALSE;
+
+      if (follows_escape_char) {
+	follows_escape_char = FALSE;
+	if (*p == '\n') {
+	  // Backslash as the last char on the line means continuation.
+	  continuation = TRUE;
+	  end_of_line = TRUE;
+	} else {
+	  // Interpret \x as x.
+	  *q++ = *p;
+	}
+      } else if (in_comment) {
+	if (*p == '\n') {	// Skip the rest of the line.
+	  end_of_line = TRUE;
+	  in_comment = FALSE;
 	}
       } else {
-	// Non-white space char.  Mark the beginning of option if necessary.
-	if (string == NULL)
-	  string = p;
+	switch (*p) {
+	  case '\n': 
+	    add_new_option = TRUE;
+	    end_of_line = TRUE;
+	    break;
+	  case '#': 
+	    if (in_single_quotes || in_double_quotes) {
+	      *q++ = '#';
+	    } else {
+	      in_comment = TRUE;
+	    }
+	    break;
+	  case ' ': 
+	    if (in_single_quotes || in_double_quotes)
+	      *q++ = ' ';
+	    else
+	      add_new_option = TRUE;
+	    break;
+	  case '\'': 	// single-quote
+	    if (in_single_quotes) {
+	      in_single_quotes = FALSE;	// end single-quote
+	    } else if (in_double_quotes) {
+	      *q++ = '\'';
+	    } else {
+	      in_single_quotes = TRUE;	// begin single-quote
+	    }
+	    break;
+	  case '"': 	// double-quote
+	    if (in_single_quotes) {
+	      *q++ = '"';
+	    } else if (in_double_quotes) {
+	      in_double_quotes = FALSE;	// end double-quote
+	    } else {
+	      in_double_quotes = TRUE;	// begin double-quote
+	    }
+	    break;
+	  case '\\': 	// backslash
+	    if (in_single_quotes)
+	      *q++ = '\\';
+	    else
+	      follows_escape_char = TRUE;
+	    break;
+	  default:	// non-special char
+	    *q++ = *p;
+        }
       }
-      // Quit if end of line.
-      if (end_of_line)
-        break;
+
+      // Add the last completed option.
+      if (add_new_option &&
+	  option[0] != '\0') {
+	*q++ = '\0';
+	if (strlen(option) >= max_len) {
+	  internal_error("read_compiler_defaults: buffer overrun");
+	  return -1;
+	}
+	add_string(default_options_list, option);
+	option[0] = '\0';
+	q = option;
+	count++;
+      }
     }
   }
+
   return count;
 }
 
@@ -946,14 +1184,16 @@ static void
 append_default_options (int *argc, char *(*argv[]))
 {
   char *compiler_defaults_path =
-	 string_copy(getenv("PSC_COMPILER_DEFAULTS_PATH"));
+  #ifdef PSC_TO_OPEN64
+	 string_copy(getenv("OPEN64_COMPILER_DEFAULTS_PATH"));
+  #endif
   int default_options_count = 0;
   string_list_t *default_options_list = init_string_list();
 
-  // If the environment variable PSC_COMPILER_DEFAULTS_PATH is not set, then
-  // look for the defaults file in /opt/pathscale/etc.
   if (compiler_defaults_path == NULL) {
-    compiler_defaults_path = strdup("/opt/pathscale/etc");
+    char *exe_dir = get_executable_dir();
+    asprintf(&compiler_defaults_path, "%.*s/etc",
+	     (int)(strlen(exe_dir) - 4), exe_dir);
   }
 
   // Search for the defaults file in the colon-separated compiler default
@@ -980,6 +1220,8 @@ append_default_options (int *argc, char *(*argv[]))
     if ((f = fopen(buf, "r")) != NULL) {
       default_options_count = read_compiler_defaults(f, default_options_list);
       fclose(f);
+      if (default_options_count == -1)	// Quit if error.
+        return;
       break;
     }
   }
@@ -1010,12 +1252,12 @@ append_default_options (int *argc, char *(*argv[]))
   }
 }
 
-/* Read the contents of the PSC_GENFLAGS environment variable and add
+/* Read the contents of a OPEN64_(GEN|C|CXX|F)FLAGS environment variable and add
  * them to the command-line options. */
 static void
-append_psc_genflags (int *argc, char *(*argv[]))
+append_open64_env_flags (int *argc, char *(*argv[]), char *env_var)
 {
-  char * default_opt = string_copy(getenv("PSC_GENFLAGS"));
+  char * default_opt = string_copy(getenv(env_var));
   char * p, * q;
   char ** new_argv;
   int new_argc, fin = 0;
@@ -1044,7 +1286,7 @@ append_psc_genflags (int *argc, char *(*argv[]))
   }
 
   /* We only want to do this substitution once. */
-  unsetenv ("PSC_GENFLAGS");
+  unsetenv (env_var);
 }
 
 static FILE *
@@ -1090,10 +1332,12 @@ print_search_path ()
 	printf ("programs: %s:%s\n", exe_dir, get_phase_dir (P_be));
 	
 	if (abi == ABI_N32) {
-		asprintf(&our_path, "%s/lib/" PSC_FULL_VERSION "/32",
+	#ifdef PSC_TO_OPEN64
+		asprintf(&our_path, "%s/lib/" OPEN64_FULL_VERSION "/32",
 			 root_prefix);
 	} else {
-		asprintf(&our_path, "%s/lib/" PSC_FULL_VERSION, root_prefix);
+		asprintf(&our_path, "%s/lib/" OPEN64_FULL_VERSION, root_prefix);
+	#endif
 	}
 	
 	/* Add our libraries */
@@ -1171,4 +1415,52 @@ get_gcc_version(int *v, int nv)
 	}
 	
 	return version;
+}
+
+static void
+display_version(boolean dump_version_only)
+{
+  int gcc_version;
+  char *open64_gcc_version;
+
+  // Get GCC version.
+
+  if (is_toggled(gnu_version))
+    gcc_version = gnu_version;
+  else
+    gcc_version = get_gcc_major_version();
+
+#ifdef PSC_TO_OPEN64
+  if (gcc_version == 3)
+    open64_gcc_version = OPEN64_GCC_VERSION;
+  else if (gcc_version == 4)
+    open64_gcc_version = OPEN64_GCC4_VERSION;
+  else
+    internal_error("display_version: unknown GCC version %d\n", gcc_version);
+#endif
+
+  if (dump_version_only == TRUE) {
+  #ifdef PSC_TO_OPEN64
+    if (option_was_seen(O_compat_gcc))
+      puts(open64_gcc_version);
+    else
+      puts(OPEN64_FULL_VERSION);
+  #endif
+    return;
+  }
+
+  fprintf(stderr, "Open64 Compiler Suite: Version %s\n",
+	  compiler_version);
+  if (show_version > 1) {
+    fprintf(stderr, "Changeset: %s\n", cset_id);
+    fprintf(stderr, "Built by: %s@%s in %s\n", build_user, build_host,
+	    build_root);
+  }
+  fprintf(stderr, "Built on: %s\n", build_date);
+  fprintf(stderr, "Thread model: posix\n");	// Bug 4608.
+
+  #ifdef PSC_TO_OPEN64
+  fprintf(stderr, "GNU gcc version %s", open64_gcc_version);
+  fprintf(stderr, " (Open64 " OPEN64_FULL_VERSION " driver)\n");
+  #endif
 }

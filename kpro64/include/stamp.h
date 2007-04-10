@@ -1,5 +1,5 @@
 /*
- * Copyright 2003, 2004 PathScale, Inc.  All Rights Reserved.
+ * Copyright 2003, 2004, 2005, 2006 PathScale, Inc.  All Rights Reserved.
  */
 
 /*
@@ -37,7 +37,7 @@
 */
 
 
-/* $Header: /proj/osprey/CVS/open64/osprey1.0/include/stamp.h,v 1.1.1.1 2005/10/21 19:00:00 marcel Exp $ */
+/* $Header: /home/bos/bk/kpro64-pending/include/stamp.h 1.8 04/12/21 14:57:36-08:00 bos@eng-25.internal.keyresearch.com $ */
 
 #ifndef __STAMP_H__
 #define __STAMP_H__
@@ -49,13 +49,15 @@ extern "C" {
 #ifdef __linux
 #include "pathscale_defs.h"
 
-#ifndef PSC_MAJOR_VERSION
-#error PSC_MAJOR_VERSION not defined - check include path for pathscale_defs.h
+#ifdef PSC_TO_OPEN64
+#ifndef OPEN64_MAJOR_VERSION
+#error OPEN64_MAJOR_VERSION not defined - check include path for pathscale_defs.h
 #endif
 
-#define	MS_STAMP PSC_MAJOR_VERSION_NUM
-#define	LS_STAMP PSC_MINOR_VERSION_NUM
-#define INCLUDE_STAMP PSC_FULL_VERSION
+#define	MS_STAMP OPEN64_MAJOR_VERSION_NUM
+#define	LS_STAMP OPEN64_MINOR_VERSION_NUM
+#define INCLUDE_STAMP OPEN64_FULL_VERSION
+#endif
 #else
 #define	MS_STAMP 7
 #define	LS_STAMP 40

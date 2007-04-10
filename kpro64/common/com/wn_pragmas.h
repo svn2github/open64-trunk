@@ -1,5 +1,5 @@
 /*
- * Copyright 2004, 2005 PathScale, Inc.  All Rights Reserved.
+ * Copyright 2004, 2005, 2006 PathScale, Inc.  All Rights Reserved.
  */
 
 /*
@@ -119,7 +119,7 @@ extern "C" {
 
 
 #ifdef _KEEP_RCS_ID
-static char *pragmas_rcs_id = "$Source: /proj/osprey/CVS/open64/osprey1.0/common/com/wn_pragmas.h,v $ $Revision: 1.1.1.1 $";
+static char *pragmas_rcs_id = "$Source: /home/bos/bk/kpro64-pending/common/com/SCCS/s.wn_pragmas.h $ $Revision: 1.8 $";
 #endif /* _KEEP_RCS_ID */
 
 /* Pragma IDs: */

@@ -169,7 +169,7 @@
 #ifndef cxx_template_INCLUDED
 #define cxx_template_INCLUDED	  "cxx_template.h"
 #ifdef _KEEP_RCS_ID
-static char *cxx_templatercs_id = cxx_template_INCLUDED"$Revision: 1.1.1.1 $";
+static char *cxx_templatercs_id = cxx_template_INCLUDED"$Revision$";
 #endif /* _KEEP_RCS_ID */
 
 #include "mempool.h"
@@ -211,7 +211,16 @@ public:
             { Is_True(idx <= _lastidx, ("DYN_ARRAY::[]:Subscript out of range"));
               return (_array[idx]); }
 
-  void    AddElement (const T& val) { _array[Newidx()] = val; }
+  void    AddElement (const T& val)
+  {
+#ifdef KEY /* bug 11670: Newidx() may need to allocate _array. */
+    mUINT32 idx = Newidx();
+    _array[idx] = val;
+#else
+    _array[Newidx()] = val;
+#endif
+  }
+
   mUINT32 Elements () const  { return (_lastidx+1); }
 
   mUINT32 Newidx(void);                  // allocate a valid index

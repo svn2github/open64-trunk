@@ -1,5 +1,5 @@
 /*
- * Copyright 2003, 2004, 2005 PathScale, Inc.  All Rights Reserved.
+ * Copyright 2003, 2004, 2005, 2006 PathScale, Inc.  All Rights Reserved.
  */
 
 /*
@@ -1222,7 +1222,9 @@ Create_Preg_explicit(TYPE_ID mtype, const char *name,
 	switch (mtype) {
 	case MTYPE_C4:
 	case MTYPE_C8:
+#ifdef TARG_IA64
 	case MTYPE_C10:
+#endif
 	case MTYPE_FQ:
 		// reserve space for another preg
 		(void) New_PREG_explicit (scope_tab, level, preg_idx2);
@@ -1262,7 +1264,9 @@ Preg_Increment (TYPE_ID mtype)
 
     case MTYPE_C4:
     case MTYPE_C8:
+#ifdef TARG_IA64
     case MTYPE_C10:
+#endif
 #ifndef TARG_X8664
     case MTYPE_FQ:
 #endif
@@ -1659,6 +1663,7 @@ ST::Print (FILE *f, BOOL verbose) const
 #ifdef KEY
 	    if (flags & PU_NEEDS_MANUAL_UNWINDING) fprintf (f, " needs_manual_unwinding");
 	    if (flags & PU_IS_EXTERN_INLINE) fprintf (f, " extern_inline");
+	    if (flags & PU_IS_MARKED_INLINE) fprintf (f, " inline_keyword");
 #endif
 #ifdef TARG_X8664
 	    if (flags & PU_FF2C_ABI) fprintf (f, " ff2c_abi");
@@ -1840,6 +1845,8 @@ TY::Print (FILE *f) const
 	if (flags & TY_IS_NON_POD)	fprintf (f, " non_pod");
 #ifdef KEY
 	if (flags & TY_RETURN_IN_MEM)	fprintf (f, " return_in_mem");
+	if (flags & TY_CONTENT_SEEN)	fprintf (f, " content_seen");
+        if (flags & TY_IS_INCOMPLETE)   fprintf (f, " incomplete");
 #endif
     }
     fprintf (f, ")");
@@ -2047,6 +2054,7 @@ print_op<T>::operator () (UINT idx, T *entry) const {
 
 
 // specialization for printing TCONs
+template<>
 inline void
 print_op<TCON>::operator () (UINT idx, TCON *c) const
 {

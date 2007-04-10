@@ -1,5 +1,5 @@
 /*
- * Copyright 2003, 2004 PathScale, Inc.  All Rights Reserved.
+ * Copyright 2003, 2004, 2005, 2006 PathScale, Inc.  All Rights Reserved.
  */
 
 /*
@@ -96,6 +96,7 @@ enum X86_64_PARM_CLASS {
     X86_64_MEMORY_CLASS,
     X86_64_X87_CLASS,
     X86_64_X87UP_CLASS,
+    X86_64_SSEUP_CLASS,
 };
 
 #define MAX_CLASSES 2

@@ -1,4 +1,8 @@
 /*
+ *  Copyright (C) 2006. QLogic Corporation. All Rights Reserved.
+ */
+
+/*
 
   Copyright 2004, 2005, 2006 PathScale, Inc.  All Rights Reserved.
 
@@ -105,14 +109,21 @@ static void     flush_msg_file(void);
 |*	NONE								      *|
 |*									      *|
 |* Returns:								      *|
-|*	NOTHING								      *|
+|*	value of NLSPATH						      *|
 |*									      *|
 \******************************************************************************/
 
+#ifdef KEY /* Bug 5089 */
+char *init_msg_processing (char *argv[])
+#else /* KEY Bug 5089 */
 void init_msg_processing (char *argv[])
+#endif /* KEY Bug 5089 */
 
 {
    static char	      *allocstr;
+#ifdef KEY /* Bug 5089 */
+   char *result = getenv("NLSPATH");
+#endif /* KEY Bug 5089 */
 
 
    TRACE (Func_Entry, "init_msg_processing", NULL);
@@ -120,7 +131,12 @@ void init_msg_processing (char *argv[])
    /* Unconditionally open the message system */
 
 #if (defined(_TARGET_OS_IRIX) || defined(_TARGET_OS_LINUX))
-  if (getenv("NLSPATH") == NULL) {
+#ifdef KEY /* Bug 5089 */
+  if (result == NULL)
+#else /* KEY Bug 5089 */
+  if (getenv("NLSPATH") == NULL)
+#endif /* KEY Bug 5089 */
+  {
     /* NLSPATH is not set. */
     const char * const toolroot = getenv("TOOLROOT");
     const char * const env_name = "NLSPATH=";
@@ -134,7 +150,11 @@ void init_msg_processing (char *argv[])
     else
       sprintf(new_env, "%s%s%s", env_name, toolroot, env_val);
     putenv(new_env);
+#ifdef KEY /* Bug 5089 */
+    result = new_env;
+#else /* KEY Bug 5089 */
     free(new_env);
+#endif /* KEY Bug 5089 */
   }
 #endif
 
@@ -143,7 +163,9 @@ void init_msg_processing (char *argv[])
    if (msg_sys == (nl_catd) -1) {  /* (nl_catd) is msg_sys's type. */
 
 # if defined(_HOST_OS_LINUX)
-      fprintf (stderr, PSC_NAME_PREFIX "f95 INTERNAL: Unable to open message system.\n");
+#ifdef PSC_TO_OPEN64
+      fprintf (stderr, OPEN64_NAME_PREFIX "f95 INTERNAL: Unable to open message system.\n");
+#endif
 # else
       fprintf (stderr, "cf90 INTERNAL: Unable to open message system.\n");
 # endif
@@ -184,7 +206,11 @@ void init_msg_processing (char *argv[])
 
    TRACE (Func_Exit, "init_msg_processing", NULL);
 
+#ifdef KEY /* Bug 5089 */
+   return result;
+#else /* KEY Bug 5089 */
    return;
+#endif /* KEY Bug 5089 */
 
 }  /* init_msg_processing */
 
@@ -901,7 +927,11 @@ void output_msg (int				glb_line_num,
    	  char		 	 orig_text[ORIG_MSG_SIZE];
    	  char		  	 position_buff[MAX_HDR_SIZE];
 	  boolean		 print_directly_to_stderr;
+#ifdef KEY /* Bug 10177 */
+          char                  *scoping_unit_name = 0;
+#else /* KEY Bug 10177 */
           char                  *scoping_unit_name;
+#endif /* KEY Bug 10177 */
    	  char		 	*text_ptr;
 /*
    fprintf (stderr, "output_msg: line = %d, num = %d, severity = %d, col = %d\n",
@@ -1083,7 +1113,9 @@ void output_msg (int				glb_line_num,
          /* added the specific check later for the "out of memory" case.      */
 
 # if defined(_HOST_OS_LINUX)
-         fprintf(stderr, PSC_NAME_PREFIX "f95 INTERNAL: "
+#ifdef PSC_TO_OPEN64
+         fprintf(stderr, OPEN64_NAME_PREFIX "f95 INTERNAL: "
+#endif
 #else       
          fprintf(stderr, "cft90 INTERNAL: "
 #endif

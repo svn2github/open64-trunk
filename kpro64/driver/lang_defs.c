@@ -63,12 +63,14 @@ static lang_info_t language_info[] = {
 	{'N',	0x00000000,	{""}},		/* NONE */
 	{'A',	0x0fffffff,	{""}},		/* ALL */
 	{'p',	0x00000001,	{"cpp"}},		/* cpp */
-	{'c',	0x00000002,	{"cc", PSC_NAME_PREFIX "cc", PSC_TARGET "-" PSC_NAME_PREFIX "cc","gcc","c89"}},	/* cc */
-	{'C',	0x00000004,	{"CC", PSC_NAME_PREFIX "CC", PSC_NAME_PREFIX "++","g++"}},	/* c++ */
-	{'f',	0x00000008,	{"f77", PSC_NAME_PREFIX "f77","gf77","fort77"}}, /* f77 */
-	{'F',	0x00000010,	{"f90", PSC_NAME_PREFIX "f95"}},		/* f90/95 */
-	{'a',	0x00000020,	{"as", PSC_NAME_PREFIX "as","gas"}},		/* as */
-	{'l',	0x00000040,	{"ld", PSC_NAME_PREFIX "ld"}},		/* ld */
+	#ifdef PSC_TO_OPEN64
+	{'c',	0x00000002,	{"cc", OPEN64_NAME_PREFIX "cc", OPEN64_TARGET "-" OPEN64_NAME_PREFIX "cc","gcc","c89"}},	/* cc */
+	{'C',	0x00000004,	{"CC", OPEN64_NAME_PREFIX "CC", OPEN64_NAME_PREFIX "++","g++"}},	/* c++ */
+	{'f',	0x00000008,	{"f77", OPEN64_NAME_PREFIX "f77","gf77","fort77"}}, /* f77 */
+	{'F',	0x00000010,	{"f90", OPEN64_NAME_PREFIX "f95"}},		/* f90/95 */
+	{'a',	0x00000020,	{"as", OPEN64_NAME_PREFIX "as","gas"}},		/* as */
+	{'l',	0x00000040,	{"ld", OPEN64_NAME_PREFIX "ld"}},		/* ld */
+	#endif
 	{'I',	0x80000000,	{"int"}},		/* Internal option */
 };
 
@@ -98,6 +100,9 @@ static phase_info_t phase_info[] = {
    {'p',  0x0000000000000100LL, "cpp",   PHASEPATH,     FALSE}, /* cplus_cpp */
    {'p',  0x0000000000000200LL,	"mfef77",PHASEPATH,	FALSE},	/* f_cpp */
    {'p',  0x0000000000000400LL,	"ftpp"   ,PHASEPATH,	FALSE},	/* f90_cpp */
+#ifdef KEY	// bug 9058
+   {'p',  0x0000000000000800LL,	"coco"   ,PHASEPATH,	FALSE},	/* coco */
+#endif
    /* place-holder for generic cpp, whose mask unites all cpp's; */
    {'p',  0x0000000000000ff0LL,	"",	"",		FALSE},	/* any_cpp */
 
@@ -125,6 +130,11 @@ static phase_info_t phase_info[] = {
    {'f',  0x0000000000080000LL,	"mfef95",PHASEPATH,	FALSE},	/* cppf90_fe */
    {'f',  0x0000000000100000LL,	"gfec",PHASEPATH,	TRUE }, /* c_gfe */
    {'f',  0x0000000000200000LL,	"gfecc",PHASEPATH,	TRUE }, /* cplus_gfe */
+#ifdef KEY
+   {'f',  0x0000000000400000LL, "cc1"   ,PHASEPATH, TRUE }, /* spin_cc1  */
+   {'f',  0x0000000000800000LL, "cc1plus",PHASEPATH,    TRUE }, /* spin_cc1plus */
+   {'f',  0x0000000001000000LL, "wgen",PHASEPATH,   TRUE }, /* wgen      */
+#endif
    /* place-holder for generic fe, whose mask unites all fe's; */
    /* this is so -Wf will apply to whatever fe is being invoked. */
    {'f',  0x0000000000ff0000LL,	"",	"",		FALSE},	/* any_fe */
@@ -141,7 +151,8 @@ static phase_info_t phase_info[] = {
    /* We use 'B' for options to be passed to be via ipacom. */
 
    {'a',  0x0000001000000000LL,	"asm",	PHASEPATH,	FALSE},	/* as */
-#if defined(KEY) && !defined(CROSS_COMPILATION)
+#if defined(TARG_X8664) || ( defined(KEY) && !defined(CROSS_COMPILATION))
+   /* on x8664, we alwayse use gcc as the assembler */
    {'a',  0x0000002000000000LL,	NAMEPREFIX "gcc", BINPATH, FALSE}, /* gcc */
 #else
    {'a',  0x0000002000000000LL,	"as",	BINPATH,	FALSE},	/* gas */
@@ -151,7 +162,8 @@ static phase_info_t phase_info[] = {
    {'d',  0x0000008000000000LL, "dsm_prelink", PHASEPATH,FALSE},/* dsm_prelink*/
    {'j',  0x0000010000000000LL,	"ipa_link", GNUPHASEPATH,TRUE},	/* ipa_link */
    {'l',  0x0000020000000000LL,	"ld", BINPATH, TRUE},	/* collect */
-#if defined(KEY) && !defined(CROSS_COMPILATION)
+#if defined(TARG_X8664) || ( defined(KEY) && !defined(CROSS_COMPILATION))
+   /* on x8664, we alwayse use gcc/g++ as the linker */
    {'l',  0x0000040000000000LL,	NAMEPREFIX "gcc", BINPATH, FALSE}, /* ld */
    {'l',  0x0000080000000000LL,	NAMEPREFIX "g++", BINPATH, FALSE}, /* ldplus */
 #else
@@ -181,7 +193,11 @@ typedef struct source_struct {
 } source_info_t;
 /* source_kind_t is index into source_info array */
 static source_info_t source_info[] = {
-	{""},				/* NONE */
+#ifdef KEY  // If no suffix, treat as linker object.  Bug 9430.
+    {},             /* NONE */
+#else
+    {""},               /* NONE */
+#endif
 	{"c"},				/* c */
 	{"C","CC","CPP","CXX","cc","cpp","cxx","c++"},	/* C */
 	{"f","for"},			/* f */
@@ -427,7 +443,9 @@ get_named_language (char *name)
 	char *p;
 	char *nomen = strdup(name);
 
-	if ((p = strstr(nomen, "-" PSC_FULL_VERSION))) {
+#ifdef PSC_TO_OPEN64
+	if ((p = strstr(nomen, "-" OPEN64_FULL_VERSION))) {
+#endif
 	    *p = '\0';
 	    name = nomen;
 	}

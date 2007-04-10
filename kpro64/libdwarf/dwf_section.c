@@ -1,6 +1,10 @@
 /*
+ * Copyright (C) 2006. QLogic Corporation. All Rights Reserved.
+ */
 
-  Copyright 2005 PathScale, Inc.  All Rights Reserved.
+/*
+
+  Copyright 2005, 2006 PathScale, Inc.  All Rights Reserved.
 
   Copyright (C) 2000,2004 Silicon Graphics, Inc.  All Rights Reserved.
 
@@ -58,7 +62,9 @@ _dwf_pro_generate_ehframe(Dwarf_P_Debug dbg, Dwarf_Error *error)
     int elfsectno;
     int i;
     int firsttime = 1;
+#ifdef TARG_IA64
     int  pad;	/* pad for padding to align cies and fdes */
+#endif
     Dwarf_P_Cie curcie;
     Dwarf_P_Fde curfde;
     unsigned char *data;
@@ -120,7 +126,11 @@ _dwf_pro_generate_ehframe(Dwarf_P_Debug dbg, Dwarf_Error *error)
 	res = dbg->de_reloc_name(dbg, EH_FRAME,
 				 extension_size, /* r_offset */
 				 0,
+#ifdef TARG_IA64
 				 dwarf_drt_none,
+#else
+				 dwarf_drt_cie_begin,
+#endif
 				 uwordb_size);
 	if (res != DW_DLV_OK) {
 	    DWARF_P_DBG_ERROR(dbg,DW_DLE_CHUNK_ALLOC,-1);
@@ -224,8 +234,10 @@ _dwf_pro_generate_ehframe(Dwarf_P_Debug dbg, Dwarf_Error *error)
 		sizeof(Dwarf_Ubyte) +	/* return reg address */
 		curcie->cie_inst_bytes;
 	}
+#ifdef TARG_IA64
 	pad = (int)PADDING(cie_length, upointer_size);
 	cie_length += pad;
+#endif
 	if (personality) {
 	    res = dbg->de_reloc_name(dbg, EH_FRAME,
 				     extension_size+2*uwordb_size+
@@ -251,9 +263,12 @@ _dwf_pro_generate_ehframe(Dwarf_P_Debug dbg, Dwarf_Error *error)
 	}
 	du = cie_length;
 	/* total length of cie */
+#ifdef TARG_IA64
 	WRITE_UNALIGNED(dbg,(void *)data,
 			(const void *)&du,
 			sizeof(du), uwordb_size);
+#endif
+        /* the length will be computed using 'begin' and 'end' labels. */
 	data += uwordb_size;
 
 	/*cie-id is a special value. */
@@ -293,13 +308,26 @@ _dwf_pro_generate_ehframe(Dwarf_P_Debug dbg, Dwarf_Error *error)
 	    data += a_bytes;
 	}
 
+#ifdef TARG_IA64
 	// personality format
 	db = Personality_Format;
 	WRITE_UNALIGNED(dbg, (void *)data, (const void *)&db,
 			sizeof(db), sizeof(Dwarf_Ubyte));
 	data += sizeof(Dwarf_Ubyte);
 	// personality routine offset
+#endif
 	if (personality) {
+	    // bug 9177: Emit personality format only if there is
+	    // personality information.
+	    //
+	    // personality format
+#ifndef TARG_IA64
+	    db = Personality_Format;
+	    WRITE_UNALIGNED(dbg, (void *)data, (const void *)&db,
+			    sizeof(db), sizeof(Dwarf_Ubyte));
+	    data += sizeof(Dwarf_Ubyte);
+#endif
+	    // personality routine offset
 	    Dwarf_Unsigned p = 0;
 	    WRITE_UNALIGNED(dbg, (void *)data, (const void *)&p,
 			    sizeof(p), upointer_size);
@@ -321,10 +349,12 @@ _dwf_pro_generate_ehframe(Dwarf_P_Debug dbg, Dwarf_Error *error)
 	}
 	memcpy((void *)data, (const void *)curcie->cie_inst, curcie->cie_inst_bytes);
 	data += curcie->cie_inst_bytes;
+#ifdef TARG_IA64
 	for (i = 0 ; i < pad ; i++) {
 	    *data = DW_CFA_nop;
 	    data++;
 	}
+#endif
 	curcie = curcie->cie_next;
     }
     /* calculate current offset */
@@ -336,7 +366,9 @@ _dwf_pro_generate_ehframe(Dwarf_P_Debug dbg, Dwarf_Error *error)
     while (curfde) {
 	Dwarf_P_Frame_Pgm curinst;
 	long fde_length;
+#ifdef TARG_IA64
 	int pad;
+#endif
 	Dwarf_P_Cie cie_ptr;
 	Dwarf_Word  cie_index, index;
 	int oet_length, afl_length, res;
@@ -395,7 +427,11 @@ _dwf_pro_generate_ehframe(Dwarf_P_Debug dbg, Dwarf_Error *error)
 	res = dbg->de_reloc_name(dbg, EH_FRAME,
 				 cur_off+extension_size, /* r_offset */
 				 0,
+#ifdef TARG_IA64
 				 dwarf_drt_none,
+#else
+                                 dwarf_drt_fde_begin,
+#endif
 				 uwordb_size);
 	if (res != DW_DLV_OK) {
 	    DWARF_P_DBG_ERROR(dbg,DW_DLE_CHUNK_ALLOC,-1);
@@ -456,10 +492,11 @@ _dwf_pro_generate_ehframe(Dwarf_P_Debug dbg, Dwarf_Error *error)
 	    }
 	}
 
+#ifdef TARG_IA64
 	/* adjust for padding */
 	pad = (int)PADDING(fde_length, upointer_size);
 	fde_length += pad;
-
+#endif
 
 	/* write out fde */
 	GET_CHUNK(dbg,elfsectno,data,fde_length+uwordb_size +
@@ -478,9 +515,12 @@ _dwf_pro_generate_ehframe(Dwarf_P_Debug dbg, Dwarf_Error *error)
 		data += extension_size;
 	    }
 	    /* length */
+#ifdef TARG_IA64
 	    WRITE_UNALIGNED(dbg,(void *)data,
 			    (const void *)&du,
 			    sizeof(du), uwordb_size);
+#endif
+            /* the FDE length will be computed using 'begin/end' labels. */
 	    data += uwordb_size;
 
 	    /* offset to cie */
@@ -547,8 +587,14 @@ _dwf_pro_generate_ehframe(Dwarf_P_Debug dbg, Dwarf_Error *error)
 					 EH_FRAME,
 					 (data-fde_start_point) +
 					 cur_off, /* r_offset */
+#ifdef TARG_IA64
 					 *(unsigned short *)(&curinst->dfp_args[0]),
 					 *(unsigned short *)(&curinst->dfp_args[2]),
+#else
+                                         *(Dwarf_Unsigned *)(curinst->dfp_args),
+                                         *(Dwarf_Unsigned *)(curinst->dfp_args
+							     + sizeof(Dwarf_Unsigned)),
+#endif
 					 dwarf_drt_first_of_length_pair,
 					 uwordb_size);
 		if (res != DW_DLV_OK) {
@@ -584,11 +630,13 @@ _dwf_pro_generate_ehframe(Dwarf_P_Debug dbg, Dwarf_Error *error)
 	    data += curinst->dfp_nbytes;
 	    curinst = curinst->dfp_next;
 	}
+#ifdef TARG_IA64
 	/* padding */
 	for (i = 0 ; i < pad ; i++) {
 	    *data = DW_CFA_nop;
 	    data++;
 	}
+#endif
 	cur_off += fde_length + uwordb_size;
 	curfde = curfde->fde_next;
     }

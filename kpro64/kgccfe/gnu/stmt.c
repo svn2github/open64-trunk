@@ -1,5 +1,5 @@
 /* 
-   Copyright 2003, 2004, 2005 PathScale, Inc.  All Rights Reserved.
+   Copyright 2003, 2004, 2005, 2006 PathScale, Inc.  All Rights Reserved.
    File modified October 3, 2003 by PathScale, Inc. to update Open64 C/C++ 
    front-ends to GNU 3.3.1 release.
  */
@@ -334,6 +334,22 @@ void popstack (struct nesting * target)
     free (current);
   } while (current != target);
 }
+
+/* Bug 11701: Returns the nesting level that has an exit label. See
+   expand_exit_something(), exit_label_idx used similarly to exit_label. */
+struct nesting *
+wfe_get_matching_scope (struct nesting * n)
+{
+  for (; n; n = n->all)
+    if (n->exit_label_idx != 0)
+      {
+        return n;
+      }
+
+  /* Should not reach here */
+  return NULL;
+}
+
 #endif // KEY
 
 /* Allocate and return a new `struct nesting'.  */

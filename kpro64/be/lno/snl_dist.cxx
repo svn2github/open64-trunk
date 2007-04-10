@@ -1,5 +1,5 @@
 /*
- * Copyright 2004 PathScale, Inc.  All Rights Reserved.
+ * Copyright 2004, 2005, 2006 PathScale, Inc.  All Rights Reserved.
  */
 
 /*
@@ -39,10 +39,10 @@
 
 // -*-C++-*-
 
-/** $Revision: 1.1.1.1 $
-*** $Date: 2005/10/21 19:00:00 $
-*** $Author: marcel $
-*** $Source: /proj/osprey/CVS/open64/osprey1.0/be/lno/snl_dist.cxx,v $
+/** $Revision: 1.5 $
+*** $Date: 04/12/21 14:57:15-08:00 $
+*** $Author: bos@eng-25.internal.keyresearch.com $
+*** $Source: /home/bos/bk/kpro64-pending/be/lno/SCCS/s.snl_dist.cxx $
 **/
 
 #define __STDC_LIMIT_MACROS
@@ -53,7 +53,7 @@
 #pragma hdrstop
 
 #define snl_dist_CXX      "snl_dist.cxx"
-static char *rcs_id =   snl_dist_CXX "$Revision: 1.1.1.1 $";
+static char *rcs_id =   snl_dist_CXX "$Revision: 1.5 $";
 
 #include <sys/types.h>
 #include <alloca.h>
@@ -359,11 +359,35 @@ static BOOL SNL_Is_Distributable_Tree(WN* wn_tree,
     // Must be a memory reference. 
     VINDEX16 v = dg->Get_Vertex(wn);
     if (v == 0) {
+//Bug 10708: we should assume the worst case
       if (WN_operator(wn) == OPR_LDID 
 	  || WN_operator(wn) == OPR_STID)
-	continue;
+#ifdef KEY
+//Bug 10915: For LDID, it is always fine to distribute (may require 
+//           scalar expansion
+//           For STID, there are two cases:
+//           (1) above: fine through scalar expansion
+//               do i ...
+//                   x = ...
+//                   do j ...
+//                     = x ...
+//                   enddo //j
+//               enddo //i 
+//
+//            (2) below: distribution causes problem in bug 10708
+//               do i ...
+//                   do j ...
+//                     = x ...
+//                   enddo //j
+//                   x = ...
+//               enddo //i                  
+          if(WN_operator(wn) == OPR_STID && !above)//case (2)            
+            return FALSE;
+          else
+#endif
+	 continue; // LDID and case (1)
       return FALSE;
-    }
+   }
 
     // Check for distribution preventing dependences. 
     if (above) { 
@@ -412,14 +436,28 @@ static BOOL SNL_Is_Distributable_Traverse(WN* wn_loop,
  WN* wn_first = WN_first(WN_do_body(wn_loop)); 
  if (above) { 
    WN *wn;
-   for (wn = wn_first; WN_opcode(wn) != OPC_DO_LOOP; wn = WN_next(wn)) 
+#ifdef KEY //bug 11671: we may not find a do loop, especially for APO
+   for (wn = wn_first; wn && WN_opcode(wn) != OPC_DO_LOOP; wn = WN_next(wn))
+#else
+   for (wn = wn_first; WN_opcode(wn) != OPC_DO_LOOP; wn = WN_next(wn))
+#endif
      if (!SNL_Is_Distributable_Tree(wn, wn_dist, wn_inner, above))
-       return FALSE; 
+       return FALSE;
+#ifdef KEY //bug 11671: even though wn_loop is not inner, but inner is hidden in region
+   if(wn==NULL)
+     return FALSE;
+#endif 
    if (!SNL_Is_Distributable_Traverse(wn, wn_dist, wn_inner, TRUE))
      return FALSE; 
  } else { 
    WN *wn;
-   for (wn = wn_first; WN_opcode(wn) != OPC_DO_LOOP; wn = WN_next(wn));
+#ifdef KEY //bug 11671
+  for (wn = wn_first; wn && WN_opcode(wn) != OPC_DO_LOOP; wn = WN_next(wn));
+    if(wn==NULL)
+      return FALSE;
+#else
+  for (wn = wn_first; wn && WN_opcode(wn) != OPC_DO_LOOP; wn = WN_next(wn));
+#endif
    if (!SNL_Is_Distributable_Traverse(wn, wn_dist, wn_inner, FALSE))
      return FALSE; 
    for (wn = WN_next(wn); wn != NULL; wn = WN_next(wn))

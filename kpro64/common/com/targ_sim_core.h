@@ -1,5 +1,5 @@
 /*
- * Copyright 2003, 2004 PathScale, Inc.  All Rights Reserved.
+ * Copyright 2003, 2004, 2005, 2006 PathScale, Inc.  All Rights Reserved.
  */
 
 /*
@@ -74,9 +74,6 @@ extern BOOL Is_Return_Preg (PREG_NUM preg);
 /* return whether preg is an output preg */
 extern BOOL Is_Int_Output_Preg (PREG_NUM preg);
 
-/* return whether preg is FP output preg */
-extern BOOL Is_Fp_Output_Preg (PREG_NUM preg);
-
 /* return whether preg is an input parameter preg */
 extern BOOL Is_Formal_Preg (PREG_NUM preg);
 
@@ -105,6 +102,12 @@ public:
 #endif
 				     );
 };
+
+extern RETURN_INFO Get_Return_Info (TY_IDX rtype, Mtype_Return_Level level
+#ifdef TARG_X8664
+  				      , BOOL ff2c_abi
+#endif
+				     );
 
 inline mINT8
 RETURN_INFO_count (const RETURN_INFO& info) { return info.count; }

@@ -1,5 +1,9 @@
 /*
- * Copyright 2004, 2005 PathScale, Inc.  All Rights Reserved.
+ *  Copyright (C) 2006. QLogic Corporation. All Rights Reserved.
+ */
+
+/*
+ * Copyright 2004, 2005, 2006 PathScale, Inc.  All Rights Reserved.
  */
 
 /*
@@ -393,6 +397,9 @@ typedef struct MHD_LEVEL {
  private:
 
   void      Compute_Effective_Size();
+#ifdef KEY
+  void      Reset_CS_String();
+#endif
 #endif
 } MHD_LEVEL;
 

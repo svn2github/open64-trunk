@@ -1,4 +1,8 @@
 /*
+ *  Copyright (C) 2006. QLogic Corporation. All Rights Reserved.
+ */
+
+/*
  * Copyright 2004, 2005, 2006 PathScale, Inc.  All Rights Reserved.
  */
 
@@ -36,6 +40,8 @@
 
 */
 
+#ifndef I_CVRT_INCLUDED
+#define I_CVRT_INCLUDED
 
 # ifdef __cplusplus
 extern "C" {
@@ -1431,7 +1437,11 @@ extern void  fei_hw_rshift       	  ( TYPE type );
 extern void  fei_hw_lshift       	  ( TYPE type );
 extern void  fei_exponentiate    	  ( TYPE type );
 extern void  fei_complex         	  ( TYPE type );
+#ifdef KEY /* Bug 10410 */
+extern void  fei_select          	  ( TYPE type, int cselect );
+#else /* KEY Bug 10410 */
 extern void  fei_select          	  ( TYPE type );
+#endif /* KEY Bug 10410 */
 extern void  fei_mbits           	  ( TYPE type );
 extern void  fei_dshiftl         	  ( TYPE type );
 extern void  fei_dshiftr         	  ( TYPE type );
@@ -1480,17 +1490,27 @@ extern void  fei_new_select      	  ( INT32 num_cases,
                                  	    INTPTR default_label_idx );
 extern TYPE  fei_dope_vector              ( INT32 num_dims, 
                                     	    TYPE  base_type,
-                                     	    INT32 flags );
+                                     	    INT32 flags,
+#ifdef KEY /* Bug 6845 */
+                                     	    INT32 n_allocatable_cpnt
+#endif /* KEY Bug 6845 */
+					    );
 extern void  fei_dv_ptr_asg               ( void );
+#ifndef KEY /* Bug 6845 */
 extern void  fei_set_dv_hdr_fld           ( INT32 field );
 extern void  fei_get_dv_hdr_fld           ( INT32 field );
+#endif /* KEY Bug 6845 */
 extern void  fei_set_dv_low_bnd           ( INT32 dim );
 extern void  fei_set_dv_extent            ( INT32 dim );
 extern void  fei_set_dv_str_mult          ( INT32 dim );
 extern void  fei_get_dv_low_bnd           ( INT32 dim, INT32 expand );
 extern void  fei_get_dv_extent            ( INT32 dim, INT32 expand );
 extern void  fei_get_dv_str_mult          ( INT32 dim, INT32 expand );
+#ifdef KEY /* Bug 6845 */
+extern void  fei_dv_def(INT32 num_dims, INT32 n_alloc_cpnt );
+#else /* KEY Bug 6845 */
 extern void  fei_dv_def                   ( INT32 num_dims );
+#endif /* KEY Bug 6845 */
 extern void  fei_all                      ( TYPE type );
 extern void  fei_any                      ( TYPE type );
 extern void  fei_count                    ( TYPE type );
@@ -1639,3 +1659,4 @@ extern int Check_FF2C_Script           ( char *callee_key,
 }
 # endif 
 
+#endif /* I_CVRT_INCLUDED */

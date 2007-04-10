@@ -1,5 +1,5 @@
 /* 
-   Copyright 2003, 2004, 2005 PathScale, Inc.  All Rights Reserved.
+   Copyright 2003, 2004, 2005, 2006 PathScale, Inc.  All Rights Reserved.
    File modified June 20, 2003 by PathScale, Inc. to update Open64 C/C++ 
    front-ends to GNU 3.2.2 release.
  */
@@ -60,6 +60,7 @@
 #include "targ_sim.h"
 #ifdef KEY
 #include "const.h"
+extern "C" void check_gnu_errors (INT *, INT *);
 #endif
 #include <ctype.h>
 
@@ -406,10 +407,11 @@ WFE_Add_Case_Node (tree low, tree high, tree label)
 #ifdef KEY
   }
 #endif
+#ifdef PATHSCALE_MERGE
   // bug fix for OSP_96
   //
   New_LABEL (CURRENT_SYMTAB, case_label_idx);
-  
+#endif
   label->decl.sgi_u1.label_idx = case_label_idx;
   label->decl.label_defined = TRUE;
   case_info_stack [case_info_i].case_label_idx = case_label_idx;
@@ -427,6 +429,7 @@ WFE_Expand_End_Case_Dummy (void)
 {
 } /* WFE_Expand_End_Case_Dummy */
 
+#ifdef PATHSCALE_MERGE
 // bug fix for OSP_206
 static WN* WN_CreateIfForCaseGotoRange(
   ST_IDX value, TYPE_ID value_ty,
@@ -446,7 +449,7 @@ static WN* WN_CreateIfForCaseGotoRange(
   WN_INSERT_BlockLast(then_blk, wn_goto);
   return WN_CreateIf(cond, then_blk, else_blk);
 } /* WN_CreateIfForCaseGotoRange */
-
+#endif
 void
 WFE_Expand_End_Case (tree orig_index)
 {
@@ -458,6 +461,7 @@ WFE_Expand_End_Case (tree orig_index)
   WN    *case_entry;
   WN    *def_goto;
   WN    *wn;
+#ifdef PATHSCALE_MERGE
   // bug fix for OSP_206
   /* for moving case 1 ... 10000 out side of the switch */
   ST    *value_st = NULL;
@@ -465,7 +469,7 @@ WFE_Expand_End_Case (tree orig_index)
   WN    *if_block = NULL;
   char st_name[32];
   const int CASE_VALUE_THRESHOLD = 512;
-  
+#endif
   TYPE_ID index_mtype = switch_info_stack [switch_info_i].index_mtype;
 
   n = case_info_i - switch_info_stack [switch_info_i].start_case_index + 1;
@@ -489,6 +493,7 @@ WFE_Expand_End_Case (tree orig_index)
       WN_INSERT_BlockLast (case_block, case_entry);
     }
     else {
+#ifdef PATHSCALE_MERGE
       // bug fix for OSP_206
       UINT64 range;
       if (MTYPE_is_signed (index_mtype))
@@ -570,6 +575,7 @@ WFE_Expand_End_Case (tree orig_index)
                                  switch_info_stack [switch_info_i].exit_label_idx);
   }
 
+#endif
 #ifndef KEY
   WFE_Stmt_Append (switch_wn, Get_Srcpos ());
   WFE_Stmt_Append (switch_block, Get_Srcpos ());
@@ -765,7 +771,7 @@ WFE_Expand_Return (tree retval)
           TY_align (ret_ty_idx) < MTYPE_align_best(Spill_Int_Mtype)) {
         ST *st = WN_st (rhs_wn);
         TY_IDX ty_idx = ST_type (st);
-	
+#ifdef PATHSCALE_MERGE
 	// bug fix for OSP_224 
 	// fix for unaligned memory access in 458.sjeng in spec2k6
 	// If one symbol is required to A bytes alignment, it must 
@@ -775,6 +781,7 @@ WFE_Expand_Return (tree retval)
 	// otherwise, compile will generate ld/st B to access this st, where B > A.
 	//
         if (ty_idx == ret_ty_idx && ST_sclass(st) != SCLASS_EXTERN) {
+#endif
           Set_TY_align (ty_idx, MTYPE_align_best(Spill_Int_Mtype));
           Set_ST_type (st, ty_idx);
         }
@@ -819,9 +826,11 @@ idname_from_regnum (int gcc_reg)
 		st = Int_Preg;
 	else if (Preg_Offset_Is_Float(preg))
 		st = Float_Preg;
+#ifdef TARG_IA64
 	// bug fix for OSP_87
 	else if (Preg_Offset_Is_Branch(preg))
 	        st = Branch_Preg;
+#endif
 #ifdef TARG_X8664
 	else if (Preg_Offset_Is_X87(preg))
 		st = X87_Preg;
@@ -920,6 +929,26 @@ constraint_by_address (const char *s)
   }
 }
 
+#ifdef KEY
+// Use the OPND_NUM_MAP to update the operand numbers in the CONSTRAINT_STRING.
+static void
+update_opnd_num(int *opnd_num_map, char *constraint_string)
+{
+  char *p;
+
+  for (p = constraint_string; *p != '\0'; p++) {
+    if (*p >= '0' &&
+	*p <= '9') {
+      unsigned int old_opnd_num = *p - '0';
+      unsigned int new_opnd_num = opnd_num_map[old_opnd_num];
+      Is_True(new_opnd_num >= 0 && new_opnd_num <= old_opnd_num,
+	      ("update_opnd_num: bad opnd numbers map"));
+      *p = new_opnd_num + '0';
+    }
+  }
+}
+#endif
+
 static WN *
 add_offset(WN_OFFSET  ofst,
 	   WN        *address)	// not const; some simplification may occur.
@@ -987,20 +1016,39 @@ Wfe_Expand_Asm_Operands (tree  string,
   tree tail;
   char *constraint_string;
 
+#ifdef KEY
+  // Map operand numbers in the original asm to operand numbers in the WHIRL
+  // asm.  The mapping changes because for 'm' output constraints, the WHIRL
+  // asm represents it as an input rather than an output.  This changes the
+  // operand positions of all the subsequent output operands.  For example:
+  //   asm ("foo %0,%1" : "=rm" (a), "=r" (b) : "1" (b))
+  // effectively becomes:
+  //   asm ("foo %0,%1" : "=r" (b) : "r" (a), "1" (b))
+  // Now we need to rename "1"(b) to "0"(b).
+  int opnd_num_map[MAX_RECOG_OPERANDS];
+#endif
+
   // Keep list of output operand constraints so that we know
   // what a numeric constraint refers to.
   int i = 0;
   // Store the constraint strings
   for (tail = outputs; tail; tail = TREE_CHAIN (tail)) {
 #ifdef KEY
+    // Initialize operand numbers map.
+    opnd_num_map[i] = i;
+
     // In gcc-3.2, TREE_PURPOSE of tail represents a TREE_LIST node whose
     // first operand gives the string constant.
     constraint_string = 
-      TREE_STRING_POINTER (TREE_OPERAND (TREE_PURPOSE (tail), 0));
+      const_cast<char*>TREE_STRING_POINTER (TREE_OPERAND (TREE_PURPOSE (tail), 0));
 #endif /* KEY */
     operand_constraint_array[i] = constraint_string;
     ++i;
   }
+#ifdef KEY
+  opnd_num_map[i] = -1;
+#endif
+
   FmtAssert(i < MAX_RECOG_OPERANDS, ("Too many asm operands"));
   for ( ; i < MAX_RECOG_OPERANDS; ++i) {
     operand_constraint_array[i] = NULL;
@@ -1027,7 +1075,7 @@ Wfe_Expand_Asm_Operands (tree  string,
       // In gcc-3.2, TREE_PURPOSE of tail represents a TREE_LIST node whose
       // first operand gives the string constant.
       constraint_string = 
-	TREE_STRING_POINTER (TREE_OPERAND (TREE_PURPOSE (tail), 0));
+	const_cast<char*>TREE_STRING_POINTER (TREE_OPERAND (TREE_PURPOSE (tail), 0));
 #endif /* KEY */
 
       if (strchr (constraint_string, '+') ||
@@ -1045,7 +1093,7 @@ Wfe_Expand_Asm_Operands (tree  string,
     }
 
   WN *asm_wn = WN_CreateAsm_Stmt (ninputs + 2,
-				  TREE_STRING_POINTER (string));
+				  const_cast<char*>TREE_STRING_POINTER (string));
 
   WN *clobber_block = WN_CreateBlock ();
 
@@ -1054,7 +1102,7 @@ Wfe_Expand_Asm_Operands (tree  string,
   for (tail = clobbers; tail; tail = TREE_CHAIN (tail))
     {
       char *clobber_string =
-	TREE_STRING_POINTER (TREE_VALUE (tail));
+	const_cast<char*>TREE_STRING_POINTER (TREE_VALUE (tail));
 
       WN *clobber_pragma = NULL;
 
@@ -1132,7 +1180,7 @@ Wfe_Expand_Asm_Operands (tree  string,
       // In gcc-3.2, TREE_PURPOSE of tail represents a TREE_LIST node whose
       // first operand gives the string constant.
       constraint_string = 
-	TREE_STRING_POINTER (TREE_OPERAND (TREE_PURPOSE (tail), 0));
+	const_cast<char*>TREE_STRING_POINTER (TREE_OPERAND (TREE_PURPOSE (tail), 0));
 #endif /* KEY */
 
       if (constraint_by_address(constraint_string)) {
@@ -1145,6 +1193,13 @@ Wfe_Expand_Asm_Operands (tree  string,
 	WN_kid (asm_wn, i) =
 	  WN_CreateAsm_Input (constraint_string, opnd_num, addr_of_lvalue);
 	++i;
+#ifdef KEY
+	// There is effectively one less output.  Decrement all subsequent
+	// output operand positions by one.
+	for (int j = opnd_num + 1; opnd_num_map[j] != -1; j++) {
+	  opnd_num_map[j]--;
+	}
+#endif
       }
       ++opnd_num;
     }
@@ -1165,7 +1220,7 @@ Wfe_Expand_Asm_Operands (tree  string,
       // In gcc-3.2, TREE_PURPOSE of tail represents a TREE_LIST node whose
       // first operand gives the string constant.
       constraint_string = 
-	TREE_STRING_POINTER (TREE_OPERAND (TREE_PURPOSE (tail), 0));
+	const_cast<char*>TREE_STRING_POINTER (TREE_OPERAND (TREE_PURPOSE (tail), 0));
 #endif /* KEY */
 
       if (flag_bad_asm_constraint_kills_stmt &&
@@ -1206,7 +1261,8 @@ Wfe_Expand_Asm_Operands (tree  string,
 				 (UINT) 0);
 	}
       }
-      
+
+#ifdef PATHSCALE_MERGE
       // bug fix for OSP_141
       // When considering the related ASM statement as following:
       // __asm__ ("xma.hu %0 = %1, %2, f0": "=f" (_q):"f" ((-x)),"f" ((__di)));
@@ -1220,7 +1276,12 @@ Wfe_Expand_Asm_Operands (tree  string,
 	  input_rvalue = WN_CreateExp1(OPR_CVT, MTYPE_F8, WN_rtype(input_rvalue), input_rvalue);
 	}
       }
-      
+#endif
+#ifdef KEY
+      // Get the new operand numbers from map.
+      update_opnd_num(opnd_num_map, constraint_string);
+#endif
+
       WN_kid (asm_wn, i) =
 	WN_CreateAsm_Input (constraint_string, opnd_num, input_rvalue);
       ++i;
@@ -1250,7 +1311,7 @@ Wfe_Expand_Asm_Operands (tree  string,
       // In gcc-3.2, TREE_PURPOSE of tail represents a TREE_LIST node whose
       // first operand gives the string constant.
       constraint_string = 
-	TREE_STRING_POINTER (TREE_OPERAND (TREE_PURPOSE (tail), 0));
+	const_cast<char*>TREE_STRING_POINTER (TREE_OPERAND (TREE_PURPOSE (tail), 0));
 #endif /* KEY */
 
       if (!constraint_by_address(constraint_string)) {
@@ -1272,7 +1333,7 @@ Wfe_Expand_Asm_Operands (tree  string,
 	       || TREE_CODE (output) == FIX_CEIL_EXPR)
 	  output = TREE_OPERAND (output, 0);
 #endif
-	
+#ifdef PATHSCALE_MERGE
 	// bug fix for OSP_141
 	//
 	if (strchr (constraint_string, 'f') != NULL) {
@@ -1285,6 +1346,7 @@ Wfe_Expand_Asm_Operands (tree  string,
 	  }
 	}
 	
+#endif 
 	if (plus_modifier)
 	  {
 	    // de-plus the output operand's constraint string.
@@ -1301,7 +1363,7 @@ Wfe_Expand_Asm_Operands (tree  string,
 #ifdef KEY
 	nonmem_opnd_num ++;
 #endif
-	
+
 	WN *output_rvalue_wn = WFE_Lhs_Of_Modify_Expr (MODIFY_EXPR,
 						       output,
 						       plus_modifier,
@@ -1327,14 +1389,14 @@ Wfe_Expand_Asm_Operands (tree  string,
 	// reference in the output operand. This duplicates work done in
 	// WFE_Lhs_Of_Modify_Expr.
 	TYPE_ID desc = TY_mtype (Get_TY (TREE_TYPE (TREE_VALUE (tail))));
-	
+#ifdef PATHSCALE_MERGE
 	// bug fix for OSP_141
 	// 
 	if (strchr (constraint_string, 'f') != NULL) {
 	  Is_True(MTYPE_bit_size(desc) >= 64, ("bit size must equal or greater than 64"));
 	  desc = MTYPE_F8;
 	}
-	
+#endif
 	ST *preg_st = MTYPE_To_PREG(desc);
 
 	ST *constraint_st = New_ST(CURRENT_SYMTAB);
@@ -1366,10 +1428,23 @@ Wfe_Expand_Asm_Operands (tree  string,
     }
 }
 
+// KEY: This function looks wrong, instead of iterating through the array,
+// it accesses the same element in all the iterations.
 void
 WFE_Check_Undefined_Labels (void)
 {
   INT32 i;
+#ifdef KEY // bug 6152
+  INT error_count, sorry_count;
+
+  check_gnu_errors (&error_count, &sorry_count);
+  if (error_count || sorry_count)
+  {
+    undefined_labels_i = 0;
+    return;
+  }
+#endif
+
   for (i = undefined_labels_i; i >= 0; --i) {
     LABEL_IDX  label_idx  = undefined_labels_stack [undefined_labels_i].label_idx;
     SYMTAB_IDX symtab_idx = undefined_labels_stack [undefined_labels_i].symtab_idx;
@@ -1399,17 +1474,19 @@ WFE_Null_ST_References (tree* node)
 {
   if ( TREE_CODE (*node) == VAR_DECL )
   {
+#ifdef PATHSCALE_MERGE
     // bug fix for OSP_207
     if(DECL_ST (*node)==NULL)
          return 0;
-
+#endif
     ST_SCLASS sc = ST_sclass (DECL_ST (*node));
 
     // Don't null out global symbols
     if ( sc != SCLASS_DGLOBAL &&
          sc != SCLASS_EXTERN &&
          sc != SCLASS_FSTATIC &&
-         sc != SCLASS_UGLOBAL )
+         sc != SCLASS_UGLOBAL &&
+         sc != SCLASS_COMMON )
       DECL_ST(*node) = NULL;
   }
 
@@ -1486,7 +1563,7 @@ WFE_Expand_Pragma (tree exp)
       TCON tcon;
       exp = (tree) exp->omp.omp_clause_list;
       tcon = Host_To_Targ_String (MTYPE_STRING,
-                                  TREE_STRING_POINTER(exp),
+                                  const_cast<char*>TREE_STRING_POINTER(exp),
                                   TREE_STRING_LENGTH(exp) - 1 /*ignore \0*/);
       TY_IDX ty_idx = Get_TY(TREE_TYPE(exp));
       ST * st = New_Const_Sym (Enter_tcon (tcon), ty_idx);  

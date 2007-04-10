@@ -1,5 +1,5 @@
 /*
- * Copyright 2004, 2005 PathScale, Inc.  All Rights Reserved.
+ * Copyright 2004, 2005, 2006 PathScale, Inc.  All Rights Reserved.
  */
 
 /*
@@ -1664,20 +1664,14 @@ static PF_SORTED_REFS* Sort_Refvecs (PF_REFVEC_DA* refvecs, mINT16 leadingref){
     // scan the current list (has i+1 elements)
     PF_REFVEC* refvec = refvecs->Bottom_nth(i);
     INT j;
-    for (j=0; j<(i+1); j++) 
-      //OSP_196
-      //The original code is,
-      //    if (srefs[j].dist >= refvec->Distance()) break;
-      //My fix just changes the swap policy of elements with the same distance,
-      //and it still generates a sorted array of PF_SORTED_REFS, which is the 
-      //goal of this function.
-      //However, later phase will generate prefetch node for the first element of
-      //PF_SORTED_REFS, serfs[0]. And according to Todd Mowry's algorithm, 
-      //this element should be the leading reference of a reference group. 
-      //Original code doesn't keep leading reference in srefs[0].
+    for (j=0; j<(i+1); j++)
+#ifdef KEY //preventing leader being swept away
       if (srefs[j].dist > refvec->Distance()) break;
+#else
+      if (srefs[j].dist >= refvec->Distance()) break;
+#endif
     if (j == (i+1)) {
-      // all are smaller
+      // all are smaller or equal
       srefs[i+1].dist  = refvec->Distance();
       srefs[i+1].refnum = refvec->Refnum ();
       srefs[i+1].refvecnum = i;
@@ -1905,6 +1899,31 @@ void Update_Array_Index (WN* wn, WN* wn_incr, ST_IDX idx)
   }
 }
 #endif
+
+#ifdef KEY //bug 10953 -- to generate prefetch address
+static WN *Gen_Pf_Addr_Node(WN *invariant_stride, WN *array, WN *loop)
+{
+   OPCODE mpy_opc = OPCODE_make_op(OPR_MPY,WN_rtype(array), MTYPE_V);
+   OPCODE add_opc= OPCODE_make_op(OPR_ADD,WN_rtype(array), MTYPE_V);
+   OPCODE intconst_opc= OPCODE_make_op(OPR_INTCONST,WN_rtype(array), MTYPE_V);
+
+   WN *stridenon = LWN_Copy_Tree(invariant_stride, TRUE, LNO_Info_Map);
+   LWN_Copy_Def_Use(invariant_stride, stridenon, Du_Mgr);
+
+   INT const_val;
+   WN *array_index = WN_kid(array, WN_num_dim(array)<<1);
+   if(Is_Loop_Invariant_Exp(array_index, loop))
+     const_val = LNO_Prefetch_Stride_Ahead;
+   else const_val = LNO_Prefetch_Stride_Ahead*ABS(WN_element_size(array));
+
+   WN *stride_node = LWN_CreateExp2(add_opc, array,
+           LWN_CreateExp2(mpy_opc,stridenon,
+              WN_CreateIntconst(intconst_opc, const_val)));
+
+   return stride_node;
+}
+#endif
+
 
 /***********************************************************************
  *
@@ -2283,8 +2302,8 @@ void PF_LG::Gen_Pref_Node (PF_SORTED_REFS* srefs, mINT16 start, mINT16 stop,
       if ( LNO_Prefetch_Ahead || LNO_Prefetch_Iters_Ahead) {
         INT increment;
         if ((level == level_1) || (level == level_1and2))
-          increment =  LNO_Prefetch_Ahead *Cache.LineSize(1);
-        else increment =  LNO_Prefetch_Ahead *Cache.LineSize(2);
+         increment =  LNO_Prefetch_Ahead *Cache.LineSize(1);
+         else increment =  LNO_Prefetch_Ahead*Cache.LineSize(2);
 
         increment = Stride_Forward()*increment;
 
@@ -2296,7 +2315,6 @@ void PF_LG::Gen_Pref_Node (PF_SORTED_REFS* srefs, mINT16 start, mINT16 stop,
 
             // we're exceeding a cache line in each iteration,
             // so prefetch some ITERATIONS ahead instead.
-
             stride_size = stride_size * LNO_Prefetch_Iters_Ahead;
             increment = stride_size;
         }
@@ -2306,7 +2324,32 @@ void PF_LG::Gen_Pref_Node (PF_SORTED_REFS* srefs, mINT16 start, mINT16 stop,
     }
 #endif
 
-    WN* pfnode = LWN_CreatePrefetch (offset, flag, arraynode);
+#ifndef KEY //bug 10953
+   WN* pfnode = LWN_CreatePrefetch (offset, flag, arraynode);
+#else //bug 10953
+   WN* pfnode=NULL;
+   WN *do_loop = ref;
+   while(do_loop && WN_operator(do_loop) != OPR_DO_LOOP)
+     do_loop = LWN_Get_Parent(do_loop); //stop at current
+
+   WN *invariant_stride=Simple_Invariant_Stride_Access(ref, do_loop);
+   if(NULL == invariant_stride) //all good
+      pfnode = LWN_CreatePrefetch (offset, flag, arraynode);
+   else{
+      WN *pf_addr_node = Gen_Pf_Addr_Node(invariant_stride, arraynode, do_loop);
+      PF_SET_STRIDE_2L(flag, 0); //reset flag
+      PF_SET_STRIDE_1L(flag, 0); //reset flag
+      if(level_for_cg==level_2)  //no prefetchnta for L2
+         PF_SET_STRIDE_2L (flag, 1);
+      else{ //cg stuffs
+           PF_SET_STRIDE_1L (flag, 1);
+           PF_SET_NON_TEMPORAL(flag); //prefetchnta
+           PF_SET_KEEP_ANYWAY(flag);  //don't drop
+      }
+      pfnode = LWN_CreatePrefetch (offset, flag, pf_addr_node);
+   }
+#endif //bug 10953
+  
     WN_linenum(pfnode) = LWN_Get_Linenum(ref);
     VB_PRINT (vb_print_indent;
               printf (">> pref ");
@@ -2950,7 +2993,7 @@ PF_UGS::PF_UGS (WN* wn_array, PF_BASE_ARRAY* myba) : _refs (PF_mpool) {
 
     if (i >= 0) {
       // add up the stride in the dimensions inner to "i"
-      _stride_in_enclosing_loop = ABS(WN_element_size(wn_array)); // default
+      _stride_in_enclosing_loop = (mINT16) ABS(WN_element_size(wn_array)); // default
       for (INT j=aa->Num_Vec()-1; j>i; j--) {
         WN* dim_wn = NULL;
         if (j < WN_num_dim(wn_array)) dim_wn = WN_array_dim(wn_array, j);
@@ -3197,6 +3240,26 @@ BOOL PF_UGS::Add_Ref (WN* ref) {
   return TRUE;
 }
 
+#ifdef KEY //bug 10953
+static BOOL Pseudo_Temporal_Locality(WN *array)
+{
+  WN *loop = LWN_Get_Parent(array);
+  while(loop && WN_opcode(loop) != OPC_DO_LOOP)
+     loop = LWN_Get_Parent(loop);
+  if(loop == NULL)
+    return FALSE;
+  //temporalal locality is questionable for single loop
+  //and stride(non-constant) may varies between executions
+  //of the loop(NOT different iters!!!)
+  //TODO: ...
+  if(Simple_Invariant_Stride_Access(array, loop))
+    return TRUE;
+
+  return FALSE;
+}
+#endif
+
+
 /***********************************************************************
  *
  * Given the level, compute locality in the localized space,
@@ -3252,11 +3315,32 @@ void PF_UGS::ComputePFVec (PF_LEVEL level, PF_LOCLOOP locloop) {
     aa->Print (TFile);
   });
 
+#ifdef KEY //bug 10953: temporal locality estimation may not be
+           // due to various reasons(pointer access, lower-bound and
+           // step changes, etc
+  BOOL pseudo_temporal = TRUE;
+  if(!LNO_Prefetch_Invariant_Stride)
+      pseudo_temporal = FALSE;
+  else
+    for(INT kk=0; kk<_refs.Elements(); kk++){
+      if(!Pseudo_Temporal_Locality(_refs.Bottom_nth(kk))){
+         pseudo_temporal = FALSE;
+         break;
+      }
+    }
+#endif
+
   if ((level == level_1) ?
       locloop.While_Temporal_1L() : locloop.While_Temporal_2L()) {
     // there is while-temporal locality in localized loop, so don't prefetch
-    _pfdesc.Turn_Off (level);
-    PF_PRINT(fprintf (TFile, "    while temporal locality (no prefetch)\n"));
+#ifdef KEY //bug 10953
+   if(!pseudo_temporal){
+#endif
+     _pfdesc.Turn_Off (level);
+     PF_PRINT(fprintf (TFile, "    while temporal locality (no prefetch)\n"));
+#ifdef KEY
+    }
+#endif
     return;
   }
 
@@ -3360,10 +3444,15 @@ void PF_UGS::ComputePFVec (PF_LEVEL level, PF_LOCLOOP locloop) {
       _pfdesc.Turn_On (level, prefetch_vec, depth+1);
       return;
     }
-    _pfdesc.Turn_Off (level);
-
-    PF_PRINT(fprintf (TFile, "    temporal locality with basis (no prefetch)\n");
+#ifdef KEY //bug 10953
+    if(!pseudo_temporal){
+#endif
+      _pfdesc.Turn_Off (level);
+      PF_PRINT(fprintf (TFile, "    temporal locality with basis (no prefetch)\n");
              sKerH.Print (TFile));
+#ifdef KEY
+    }
+#endif
     return;
   }
   // Else no temporal locality. Any spatial?

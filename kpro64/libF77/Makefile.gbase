@@ -1,5 +1,7 @@
 # -*- Makefile -*-
 #
+#  Copyright (C) 2006. QLogic Corporation. All Rights Reserved.
+#
 #  Copyright (C) 2000, 2001 Silicon Graphics, Inc.  All Rights Reserved.
 #
 #  This program is free software; you can redistribute it and/or modify it
@@ -83,7 +85,7 @@ ifeq ($(BUILD_OPTIMIZE), NODEBUG)
 OPTIMIZER = -O3
 F90FLAGS =
 endif
-CFLAGS += -fno-fast-stdlib
+#CFLAGS += -fno-fast-stdlib
 
 # use the f90 compiler for fortran
 

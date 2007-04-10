@@ -1,4 +1,8 @@
 /*
+ *  Copyright (C) 2006. QLogic Corporation. All Rights Reserved.
+ */
+
+/*
 
   Copyright (C) 2000, 2001 Silicon Graphics, Inc.  All Rights Reserved.
 
@@ -45,6 +49,7 @@
 #include "wn.h"
 #include "config_wopt.h"	// for WOPT_Alias_Class_Limit,
 				//     WOPT_Ip_Alias_Class_Limit
+
 
 typedef struct bs BS;
 
@@ -224,6 +229,10 @@ enum PT_ATTR {
   PT_ATTR_EXTENDED        = 0x400000, // used by alias manager to represent
                                       // a consecutive array of POINTS_TO
   PT_ATTR_THIS_PTR        = 0x800000  // indirect access of "this" pointer
+#ifdef KEY
+  ,PT_ATTR_FIELD          = 0x800000  // is a field in a struct
+#endif
+
   // 24 of 32 bits used
 };
 
@@ -422,6 +431,10 @@ public:
   BOOL        Not_alloca_mem(void)   const { return ai._attr & PT_ATTR_NOT_ALLOCA_MEM; }
   BOOL        Extended(void)         const { return ai._attr & PT_ATTR_EXTENDED; }
   mINT64      Malloc_id (void)       const { return ai.Malloc_id (); } 
+#ifdef KEY
+  BOOL        Is_field(void)         const { return ai._attr & PT_ATTR_FIELD; }
+#endif
+
 
   //  Set members
   //
@@ -508,6 +521,9 @@ public:
   void Set_not_f90_target(void)           { ai._attr = (PT_ATTR) (ai._attr | PT_ATTR_NOT_F90_TARGET); }
   void Set_not_alloca_mem(void)           { ai._attr = (PT_ATTR) (ai._attr | PT_ATTR_NOT_ALLOCA_MEM); }
   void Set_extended(void)                 { ai._attr = (PT_ATTR) (ai._attr | PT_ATTR_EXTENDED); }
+#ifdef KEY
+  void Set_is_field(void)                 { ai._attr = (PT_ATTR) (ai._attr | PT_ATTR_FIELD); }
+#endif
 
   void Reset_attr(void)                   { ai._attr = PT_ATTR_NONE; }
   void Reset_not_addr_saved(void)         { ai._attr = (PT_ATTR) (ai._attr & ~PT_ATTR_NOT_ADDR_SAVED); }
@@ -538,6 +554,9 @@ public:
          Clear_Selector ();
          ai.u._ptr = NULL; ai._iofst_kind = OFST_IS_INVALID; ai._ptr_ver = (VER_ID)0; 
        }
+#ifdef KEY
+  void Reset_is_field(void) { ai._attr = (PT_ATTR) (ai._attr & ~PT_ATTR_FIELD); }
+#endif
 
   void Init(void) {
     //  Set fields in POINTS_TO to invalid for error detection.
@@ -666,6 +685,7 @@ public:
         Set_pointer_as_coderep_id (p->Pointer_coderep_id());
       }
     }
+
 
   void Copy_indirect_access_info (const POINTS_TO* p) 
     {

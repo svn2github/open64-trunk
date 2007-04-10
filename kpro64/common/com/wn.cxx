@@ -1,5 +1,9 @@
 /*
- * Copyright 2003, 2004, 2005 PathScale, Inc.  All Rights Reserved.
+ *  Copyright (C) 2006. QLogic Corporation. All Rights Reserved.
+ */
+
+/*
+ * Copyright 2003, 2004, 2005, 2006 PathScale, Inc.  All Rights Reserved.
  */
 
 /*
@@ -505,6 +509,12 @@ void WN_Remove_Delete_Cleanup_Function(void (*cleanup_fn)(WN *wn))
     delete_cleanup_fns[i] = delete_cleanup_fns[i+1];
 }
 
+#ifdef KEY // bug 9651
+void WN_Reset_Num_Delete_Cleanup_Fns(void)
+{
+  num_delete_cleanup_fns = 0;
+}
+#endif
 
 /* ---------------------------------------------------------------------
  * WN_MAP_ID New_Map_Id( void )
@@ -1293,7 +1303,7 @@ WN_CreateStid (OPERATOR opr, TYPE_ID rtype, TYPE_ID desc,
 #endif /* FRONT_END */
 
 #ifdef FRONT_END
-   if (desc == MTYPE_M) {
+   if (desc == MTYPE_M && CURRENT_SYMTAB > GLOBAL_SYMTAB) {
    	 Set_PU_has_very_high_whirl (Get_Current_PU ());
    }
 #endif /* FRONT_END */
@@ -1968,7 +1978,10 @@ WN *WN_CopyNode (const WN* src_wn)
     if (OPCODE_has_next_prev(opcode)) {
 	WN_linenum(wn) = WN_linenum(src_wn);
     }
-
+#ifdef KEY // bug 10105
+    if (WN_kid_count(src_wn) == 3)
+      WN_kid(wn, 2) = WN_kid(src_wn, 2);
+#endif
     return(wn);
 }
 
@@ -2294,12 +2307,21 @@ WN *WN_Iload(TYPE_ID desc, WN_OFFSET offset, TY_IDX align, WN *addr,
 
 WN *
 WN_RIload (TYPE_ID rtype, TYPE_ID desc, WN_OFFSET offset, TY_IDX align,
+#ifndef KEY
 	   WN *addr)
+#else
+           WN *addr, UINT field_id)
+#endif
 {
   TY_IDX palign;
   palign = Make_Pointer_Type(align);
 
+#ifndef KEY
   return WN_CreateIload (OPR_ILOAD, rtype, desc, offset, align, palign, addr);
+#else
+  return WN_CreateIload (OPR_ILOAD, rtype, desc, offset, align, palign, addr,
+                         field_id);
+#endif
 }
 
 WN *
@@ -3012,6 +3034,9 @@ WN_set_st_addr_saved (WN* wn)
     case OPR_RSQRT:
     case OPR_PARM:
     case OPR_OPTPARM:
+#ifdef TARG_X8664
+    case OPR_ATOMIC_RSQRT:
+#endif
 
       WN_set_st_addr_saved (WN_kid0(wn));
       break;
@@ -3131,6 +3156,7 @@ WN_has_side_effects (const WN* wn)
     case OPR_REDUCE_MPY:
     case OPR_SHUFFLE:
     case OPR_REPLICATE:
+    case OPR_ATOMIC_RSQRT:
 #endif // TARG_X8664
 #ifdef KEY
     case OPR_ILDA:

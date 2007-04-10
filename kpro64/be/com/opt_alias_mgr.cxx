@@ -1,5 +1,5 @@
 /*
- * Copyright 2002, 2003, 2004 PathScale, Inc.  All Rights Reserved.
+ * Copyright 2002, 2003, 2004, 2005, 2006 PathScale, Inc.  All Rights Reserved.
  */
 
 /*
@@ -62,7 +62,7 @@
 #pragma hdrstop
 #ifdef _KEEP_RCS_ID
 #define opt_alias_mgr_CXX	"opt_alias_mgr.cxx"
-static char *rcs_id = 	opt_alias_mgr_CXX"$Revision: 1.1.1.1 $";
+static char *rcs_id = 	opt_alias_mgr_CXX"$Revision: 1.7 $";
 #endif /* _KEEP_RCS_ID */
 
 #include "string.h"
@@ -972,7 +972,11 @@ ALIAS_RESULT Aliased(const ALIAS_MANAGER *am, WN *wn1, WN *wn2,
 
   if (OPERATOR_is_store(WN_operator(wn1)) && OPERATOR_is_load(WN_operator(wn2)) ||
       OPERATOR_is_store(WN_operator(wn2)) && OPERATOR_is_load(WN_operator(wn1))) {
+#ifdef TARG_IA64
     if (am->Rule()->Aliased_Memop(pt1, pt2, ignore_loop_carried)) // OSP-172
+#else
+    if (am->Rule()->Aliased_Memop(pt1, pt2, WN_object_ty(wn1), WN_object_ty(wn2)))
+#endif
       return POSSIBLY_ALIASED;
   } else {
     // cannot apply ANSI type rule to STORE <--> STORE.

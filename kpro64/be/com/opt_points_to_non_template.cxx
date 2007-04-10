@@ -1,5 +1,9 @@
 /*
- * Copyright 2003, 2004, 2005 PathScale, Inc.  All Rights Reserved.
+ *  Copyright (C) 2006. QLogic Corporation. All Rights Reserved.
+ */
+
+/*
+ * Copyright 2003, 2004, 2005, 2006 PathScale, Inc.  All Rights Reserved.
  */
 
 /*
@@ -53,8 +57,12 @@
 #include "opt_util.h"
 
 #ifdef __linux__
+#ifdef SHARED_BUILD
 extern AUX_ID (*WN_aux_p) (const WN*);
 #define WN_aux (*WN_aux_p)
+#else
+extern AUX_ID WN_aux (const WN*);
+#endif
 #else
 #pragma weak WN_aux__GPC2WN
 #endif // __linux__
@@ -126,7 +134,7 @@ BOOL POINTS_TO::Same_pointer (const POINTS_TO* pt) const
      if (!ptr || ptr != pt->Pointer()) {
        return FALSE;
      }
-
+ 
      if (ST_is_constant(ptr)) {
        // version if pointer is not set before Compute_FSA(). However, we 
        // can ignore version if the <ptr> is a constant pointer. 
@@ -580,6 +588,15 @@ POINTS_TO::Analyze_ST(ST *st, INT64 byte_ofst, INT64 byte_size,
 	Set_local();  
       // if (TY_is_restrict(ST_type(st)))
       // Set_ST_pt_to_unique_mem(st);
+
+      // bug 11485: vararg part of incoming parameters needs more care
+      // bug 11669: fix triggers assertion in DEBUG MIPS; make target-dependent
+#ifdef TARG_X8664
+      if (byte_ofst >= TY_size(ST_type(st))) {
+        Set_base_kind(BASE_IS_DYNAMIC);
+        Set_ofst_kind(OFST_IS_UNKNOWN);
+      }
+#endif
       break;
     case SCLASS_FSTATIC:  // FILE static
       Set_not_auto();
@@ -724,6 +741,7 @@ void POINTS_TO::Analyze_ST_as_base(ST *st, INT64 ofst, TY_IDX ty)
       Set_iofst_kind (OFST_IS_FIXED);
     }
   } else {
+
     // ofst != 0.  Special case for LNO.
     // When the pt_to_unique_mem is set for an array A
     // *A[i] is not aliased with anything else,
@@ -789,7 +807,14 @@ void POINTS_TO::Lower_to_base(WN *wn)
       Set_base(base);
       Shift_ofst(ofst);
       Is_True(Is_pointer(), ("Pt is not a pointer."));
+#ifdef KEY
+      // If it is a field in a struct, the ofst and size should already
+      // have been set. The ofst may however change due to lowering of the ST.
+      if (!Is_field() || Byte_Size() == 0)
+        Set_byte_size(Byte_Size() + object_size);
+#else
       Set_byte_size( Byte_Size() + object_size);
+#endif // KEY
     } else {
       // if no more info, the access range is from 0 to ST_size()
       Set_bit_ofst_size(0, 0);
@@ -831,6 +856,7 @@ void POINTS_TO::Lower_to_base(WN *wn)
       Set_ofst_kind(OFST_IS_UNKNOWN);
     Set_bit_ofst_size(0, 0);
   } else {
+
     Reset_safe_to_speculate();
     if (Ofst_kind() == OFST_IS_FIXED && Is_pointer() && wn != NULL) {
       Set_byte_size(Byte_Size() + WN_object_size(wn));
@@ -871,7 +897,17 @@ void POINTS_TO::Analyze_Lda_Base(WN *wn_lda, const OPT_STAB &opt_stab)
   Copy_non_sticky_info(opt_stab.Aux_stab_entry(aux)->Points_to());
   Set_base(st);
   Set_byte_ofst(st_ofst);
+#ifdef KEY
+  // For ansi aliasing only, we can determine if this is a field-access.
+  // If this is an array with constant bounds, Analyze_Range will refine
+  // the ofst and size later.
+  if (!Alias_Pointer_Types || opt_stab.Aux_stab_entry(aux)->Field_id() == 0)
+    Set_byte_size( 0 );
+  else
+    Set_is_field();
+#else
   Set_byte_size( 0 );
+#endif // KEY
   Set_is_pointer();
   Invalidate_ptr_info ();  // it is not indirect access
 }
@@ -1067,6 +1103,12 @@ void POINTS_TO::Print(FILE *fp) const
     fprintf(fp, "%sdef_vsym", pr_separator);
     pr_separator = "|";
   }
+#ifdef KEY
+  if (Is_field()) {
+    fprintf(fp, "%sis_field", pr_separator);
+    pr_separator = "|";
+  }
+#endif
 
 #ifdef _LP64
 #define UNDEFINED_PTR    (void *)0xa5a5a5a5a5a5a5a5LL
@@ -1075,7 +1117,7 @@ void POINTS_TO::Print(FILE *fp) const
 #endif /* _LP64 */
 
   if (Based_sym())
-    fprintf(fp, ", based_sym=%s(%d)", (Based_sym() == UNDEFINED_PTR) ?
+    fprintf(fp, ", based_sym=%s(%d)\n", (Based_sym() == UNDEFINED_PTR) ?
 	    "*UNDEFINED*" : ST_name(Based_sym()), Based_sym_depth());
   else
     fprintf(fp, ", based_sym=null");

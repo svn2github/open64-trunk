@@ -1,5 +1,5 @@
 /*
- * Copyright 2005 PathScale, Inc.  All Rights Reserved.
+ * Copyright 2005, 2006 PathScale, Inc.  All Rights Reserved.
  */
 
 /*
@@ -115,7 +115,7 @@
 
 #ifdef _KEEP_RCS_ID
 /*REFERENCED*/
-static char *config_debug_h_rcs_id = "$Source: /proj/osprey/CVS/open64/osprey1.0/common/com/config_debug.h,v $ $Revision: 1.1.1.1 $";
+static char *config_debug_h_rcs_id = "$Source: /home/bos/bk/kpro64-pending/common/com/SCCS/s.config_debug.h $ $Revision: 1.6 $";
 #endif /* _KEEP_RCS_ID */
 
 #ifdef __cplusplus

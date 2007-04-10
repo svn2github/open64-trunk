@@ -1,6 +1,10 @@
 /*
+ * Copyright 2004, 2005, 2006 PathScale, Inc.  All Rights Reserved.
+ */
 
-  Copyright (C) 2000 Silicon Graphics, Inc.  All Rights Reserved.
+/*
+
+  Copyright (C) 2000, 2001 Silicon Graphics, Inc.  All Rights Reserved.
 
   This program is free software; you can redistribute it and/or modify it
   under the terms of version 2 of the GNU General Public License as
@@ -81,9 +85,10 @@
 #include "fb_whirl.h"
 #include "DaVinci.h"
 #include "freq.h"
+#ifdef TARG_IA64
 #include "cg_flags.h"
 #include "ipfec_options.h"
-
+#endif
 /* ====================================================================
  * ====================================================================
  *
@@ -201,6 +206,9 @@ typedef struct edge {
 
 #define EF_PROB_FB_BASED        0x0001
 #define EF_FB_PROPAGATED	0x0002
+#ifdef KEY /* bug 6693 */
+#define EF_PROB_HINT_BASED      0x0004
+#endif
 
 /* Indicate if this edge probability is based on feedback.
  */
@@ -213,6 +221,15 @@ typedef struct edge {
 #define EDGE_fb_propagated(e)	(EDGE_flags(e) & EF_FB_PROPAGATED)
 #define Set_EDGE_fb_propagated(e)   (EDGE_flags(e) |= EF_FB_PROPAGATED)
 #define Reset_EDGE_fb_propagated(e) (EDGE_flags(e) &= ~EF_FB_PROPAGATED)
+
+#ifdef KEY /* bug 6693 */
+/* Indicate if this edge probability is based on user hint, through
+   pragma or builtins.
+ */
+#define EDGE_prob_hint_based(e)   (EDGE_flags(e) & EF_PROB_HINT_BASED)
+#define Set_EDGE_prob_hint_based(e)   (EDGE_flags(e) |= EF_PROB_HINT_BASED)
+#define Reset_EDGE_prob_hint_based(e) (EDGE_flags(e) &= ~EF_PROB_HINT_BASED)
+#endif
 
 /* Since we don't ever need to modify the CFG, we simply preallocate
  * a vector for chains of successor and predecessor edges, both indexed
@@ -318,6 +335,13 @@ Initialize_Freq_Edges(void)
       EDGE_slst(edge) = slst;
       EDGE_succ(edge) = succ;
       BB_succ_edges(bb) = edge;
+#ifdef KEY
+      if (BBLIST_prob(slst) != 0.0 &&
+          BBLIST_prob_hint_based(slst)) {
+        EDGE_prob(edge) = BBLIST_prob(slst);
+        Set_EDGE_prob_hint_based(edge);
+      }
+#endif
 
       FOR_ALL_BB_PREDS(succ, plst) {
         if (BBLIST_item(plst) == bb) break;
@@ -478,6 +502,9 @@ Trace_Frequencies(void)
 #define PROB_OH  0.84		/* Opcode Heuristic */
 #define PROB_PH  0.60		/* Pointer Heuristic */
 #define PROB_SH  0.55		/* Store Heuristic */
+#ifdef KEY	// bug 8546
+#define PROB_SBH 0.04		/* Sequential Branch Heuristic */
+#endif
 
 /* Declare the interface of a heuristic function. A heuristic function
  * analyzes the branch and returns a boolean value to indicate if the
@@ -500,6 +527,9 @@ static BOOL Loop_Exit_Heuristic(BB *, BB *, BB *, LOOP_DESCR *, double *);
 static BOOL Opcode_Heuristic(BB *, BB *, BB *, LOOP_DESCR *, double *);
 static BOOL Pointer_Heuristic(BB *, BB *, BB *, LOOP_DESCR *, double *);
 static BOOL Store_Heuristic(BB *, BB *, BB *, LOOP_DESCR *, double *);
+#ifdef KEY
+static BOOL Sequential_Branch_Heuristic(BB *, BB *, BB *, LOOP_DESCR *, double *);
+#endif
 
 /* A list of heuristic function pointers and their names.
  */
@@ -515,7 +545,10 @@ static const struct heuristic_info heuristic[] = {
   { Loop_Exit_Heuristic,	"LEH" },
   { Opcode_Heuristic,		"OH"  },
   { Pointer_Heuristic,		"PH"  },
-  { Store_Heuristic,		"SH"  }
+  { Store_Heuristic,		"SH"  },
+#if (defined KEY && defined TARG_X8664)
+  { Sequential_Branch_Heuristic, "SBH" },
+#endif
 };
 
 
@@ -1188,6 +1221,127 @@ Return_Heuristic(
   }
 }
 
+#ifdef KEY
+/* ====================================================================
+ *
+ *  Detect if BB is an IF that branches to a BB that ends in GOTO:
+ *
+ *     if (...) { ...; goto L;}
+ *
+ *  If so, return TRUE and save the "then" successor in GOTO_SUCC, save the
+ *  other successor in NON_GOTO_SUCC, and save L's BB in GOTO_TARGET.
+ * ====================================================================
+ */
+static BOOL
+Is_Branch_With_Goto_Succ (BB *bb, BB **goto_succ, BB **non_goto_succ,
+			  BB **goto_target)
+{
+  EDGE *edge;
+  int n_succs = 0;
+  BB *goto_bb, *non_goto_bb, *goto_target_bb;
+
+  if (BB_kind(bb) != BBKIND_LOGIF)
+    return FALSE;
+
+  // Count the number of successors.
+  FOR_ALL_SUCC_EDGES(bb, edge) {
+    n_succs++;
+  }
+  if (n_succs != 2)
+    return FALSE;
+
+  // It's a 2-way branch.
+  EDGE *edge1 = BB_succ_edges(bb);
+  EDGE *edge2 = EDGE_next_succ(edge1);
+  BB *succ1 = EDGE_succ(edge1);
+  BB *succ2 = EDGE_succ(edge2);
+
+  // Find the goto target BB.
+  if (BB_kind(succ1) == BBKIND_GOTO) {
+    *goto_succ = succ1;
+    *non_goto_succ = succ2;
+    *goto_target = BBLIST_item(BB_succs(succ1));
+  } else if (BB_kind(succ2) == BBKIND_GOTO) {
+    *goto_succ = succ2;
+    *non_goto_succ = succ1;
+    *goto_target = BBLIST_item(BB_succs(succ2));
+  } else
+    return FALSE;
+
+  return TRUE;
+}
+
+/* ====================================================================
+ *
+ * Sequential_Branch_Heuristic (SBH)
+ * 
+ * Predict that this type of IF will fail:
+ *     if (...) { ...; goto L;}
+ *     if (...) { ...; goto L;}
+ *     if (...) { ...; goto L;}
+ *     ...
+ *   L: 
+ *
+ * For bug 8546.
+ * ====================================================================
+ */
+static BOOL
+Sequential_Branch_Heuristic(
+  BB *bb,
+  BB *s1,
+  BB *s2,
+  LOOP_DESCR * /* loops */,
+  double *s1_taken_prob)
+{
+  BB *goto_succ1, *non_goto_succ1, *goto_target1;
+  BB *goto_succ2, *non_goto_succ2, *goto_target2;
+  BB *goto_succ3, *non_goto_succ3, *goto_target3;
+
+  // See if BB is an IF matching the pattern.
+  if (!Is_Branch_With_Goto_Succ(bb, &goto_succ1, &non_goto_succ1,
+				&goto_target1))
+    return FALSE;
+
+  // Check succ.
+  if (Is_Branch_With_Goto_Succ(non_goto_succ1, &goto_succ2, &non_goto_succ2,
+			       &goto_target2) &&
+      goto_target1 == goto_target2) {
+
+    // Succ ok.  Check succ's succ.
+    if (Is_Branch_With_Goto_Succ(non_goto_succ2, &goto_succ3, &non_goto_succ3,
+				 &goto_target3) &&
+	goto_target1 == goto_target3) {
+      *s1_taken_prob = (s1 == goto_succ1) ? PROB_SBH : 1 - PROB_SBH;
+      return TRUE;
+    }
+  }
+
+  // The succs are not IFs of that type.  Check the previous 2 preds.
+  BB *pred1, *pred2;
+
+  if (((pred1 = BB_Unique_Predecessor(bb)) == NULL) ||
+      ((pred2 = BB_Unique_Predecessor(pred1)) == NULL))
+    return FALSE;
+
+  // Check pred.
+  if (Is_Branch_With_Goto_Succ(pred1, &goto_succ2, &non_goto_succ2,
+			       &goto_target2) &&
+      goto_target1 == goto_target2) {
+
+    // Pred ok.  Check pred's pred.
+    if (Is_Branch_With_Goto_Succ(pred2, &goto_succ3, &non_goto_succ3,
+				 &goto_target3) &&
+	goto_target1 == goto_target3) {
+      *s1_taken_prob = (s1 == goto_succ1) ? PROB_SBH : 1 - PROB_SBH;
+      return TRUE;
+    }
+  }
+
+  // BB doesn't precede or follow 2 IFs of that type.
+  return FALSE;
+}
+#endif
+
 
 /* ====================================================================
  * ====================================================================
@@ -1200,7 +1354,7 @@ Return_Heuristic(
 
 /* ====================================================================
  *
- * Trip_Loop_Exit_orob
+ * Trip_Loop_Exit_Prob
  * 
  * For loops with loopinfo and a trip count (constant or estimated), use it
  * to predict how often the branch is taken.
@@ -1682,7 +1836,27 @@ Compute_Branch_Probabilities(void)
       FOR_ALL_SUCC_EDGES(bb, edge) {
 	EDGE_prob(edge) = 1.0 / n_succs;
       }
-    } else {
+    }
+#ifdef KEY
+    else if (EDGE_prob_hint_based(BB_succ_edges(bb)) &&
+             EDGE_prob_hint_based(EDGE_next_succ(BB_succ_edges(bb)))) {
+      if (CFLOW_Trace_Freq) {
+        #pragma mips_frequency_hint NEVER
+        EDGE *edge1 = BB_succ_edges(bb);
+        EDGE *edge2 = EDGE_next_succ(edge1);
+        BB *succ1 = EDGE_succ(edge1);
+        BB *succ2 = EDGE_succ(edge2);
+
+        fprintf(TFile, "\n User builtin BB:%-3d -> BB:%-3d BB:%-3d -> BB:%-3d\n"
+                       "    ============================================\n",
+                       BB_id(bb), BB_id(succ1), BB_id(bb), BB_id(succ2));
+        fprintf(TFile, "     Combined  %.13f  %.13f\n",
+                       EDGE_prob(edge1), EDGE_prob(edge2));
+      }
+    }
+#endif
+ 
+    else {
 
       /* 2-way branch
        */
@@ -1704,6 +1878,7 @@ Compute_Branch_Probabilities(void)
       if (Trip_Loop_Exit_Prob(bb, succ1, succ2, loops, &prob_succ1)) {
 	prob_succ2 = 1.0 - prob_succ1;
       } else {
+#ifdef TARG_IA64
 	 // prob_succ1 = 0.5;
 	 // prob_succ2 = 0.5;
 	
@@ -1718,7 +1893,10 @@ Compute_Branch_Probabilities(void)
           prob_succ1 = 0.5;
           prob_succ2 = 0.5;
         }
-  
+#else
+	prob_succ1 = 0.5;
+	prob_succ2 = 0.5;
+#endif  
 	
 	/* Using "Dempster-Shafer" combine probabilities for each
 	 * heuristic that applies to this branch.
@@ -2478,25 +2656,29 @@ FREQ_Print_BB_Note(
   INT bb_id = BB_id(bb);
 
   if (!FREQ_freqs_computed && !CG_PU_Has_Feedback) return;
-  
-  fprintf(file, "// Freq  %f (%s)",
-	  BB_freq(bb),
-	  (BB_freq_fb_based(bb) ? "feedback" : "heur"));
+
+  fprintf(file, "%s<freq>\n", prefix);
+
+  fprintf(file, "%s<freq> BB:%d frequency = %#.5f (%s)\n",
+	  prefix, bb_id, BB_freq(bb),
+	  (BB_freq_fb_based(bb) ? "feedback" : "heuristic"));
 
   /* Don't bother printing only one successor edge frequency; it's obvious
    * what it is and we don't need more clutter.
    */
   if (BBlist_Len(bb_succs) > 1) {
     BBLIST *succ;
-    
-    fprintf(file,"  Prob ");
-    FOR_ALL_BBLIST_ITEMS(bb_succs,succ) {
-        fprintf(file,"%#.5f  ",BBLIST_prob(succ));
+
+    FOR_ALL_BBLIST_ITEMS(bb_succs, succ) {
+      fprintf(file, "%s<freq> BB:%d => BB:%d probability = %#.5f\n",
+	      prefix,
+	      bb_id,
+	      BB_id(BBLIST_item(succ)),
+	      BBLIST_prob(succ));
     }
-  } else {
-    fprintf(file,"  Prob 1.0");
-    }
-  fprintf(file,"\n");
+  }
+
+  fprintf(file, "%s<freq>\n", prefix);
 }
 
 

@@ -1,5 +1,5 @@
 /* 
- * Copyright 2003, 2004, 2005 PathScale, Inc.  All Rights Reserved.
+ * Copyright 2003, 2004, 2005, 2006 PathScale, Inc.  All Rights Reserved.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of version 2 of the GNU General Public License as
@@ -57,6 +57,8 @@ extern int make_symbols_weak;
 extern bool try_block_seen;
 extern bool in_cleanup;
 extern void WFE_Expand_Pragma (tree);
+extern void Push_Top_Level_Scope (tree);
+extern void Pop_Top_Level_Scope (void);
 #endif // KEY
 extern INT Current_Handler_Count();
 extern void Add_Handler_Info (WN * call_wn, INT i, INT num_handlers);

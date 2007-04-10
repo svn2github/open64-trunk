@@ -1,5 +1,5 @@
 /*
- * Copyright 2004, 2005 PathScale, Inc.  All Rights Reserved.
+ * Copyright 2004, 2005, 2006 PathScale, Inc.  All Rights Reserved.
  */
 
 /*
@@ -1567,9 +1567,11 @@ static void Atomic_Using_Critical(WN *atomic, WN *store)
     case MTYPE_F8: 
       sprintf(name,"%s","__OMP_CRITICAL_ATOMIC_F8");
       break;
+#ifdef TARG_IA64
     case MTYPE_F10: 
       sprintf(name,"%s","__OMP_CRITICAL_ATOMIC_F10");
       break;
+#endif
     case MTYPE_FQ:
       sprintf(name,"%s","__OMP_CRITICAL_ATOMIC_FQ");
       break;
@@ -1579,9 +1581,11 @@ static void Atomic_Using_Critical(WN *atomic, WN *store)
     case MTYPE_C8: 
       sprintf(name,"%s","__OMP_CRITICAL_ATOMIC_C8");
       break;
+#ifdef TARG_IA64
     case MTYPE_C10:
       sprintf(name,"%s","__OMP_CRITICAL_ATOMIC_C10");
       break;
+#endif
     case MTYPE_CQ: 
       sprintf(name,"%s","__OMP_CRITICAL_ATOMIC_CQ");
       break;
@@ -2372,6 +2376,9 @@ ATOMIC_Lowering_Class WN_ATOMIC_STORE_Lowering_Class(WN *store)
     case OPR_ASHR: case OPR_LSHR: case OPR_SHL:
     case OPR_CVT: case OPR_TAS: case OPR_CVTL: case OPR_TRUNC:
     case OPR_REALPART: case OPR_IMAGPART:
+#ifdef KEY // bug 8862
+    case OPR_CAND: case OPR_CIOR:
+#endif // KEY
       break;
     case OPR_BNOT:
       if (WN_operator(WN_kid0(operation)) != OPR_BXOR) {
@@ -2399,6 +2406,7 @@ ATOMIC_Lowering_Class WN_ATOMIC_STORE_Lowering_Class(WN *store)
 #endif
       break;
 
+#ifdef TARG_IA64
     case MTYPE_F10:
 	alclass = ALCLASS_CRITICAL;	/* XXX - ALCLASS_SWAP? */
 	break;
@@ -2407,6 +2415,10 @@ ATOMIC_Lowering_Class WN_ATOMIC_STORE_Lowering_Class(WN *store)
     case MTYPE_U1: case MTYPE_U2:
     case MTYPE_FQ:
     case MTYPE_C4: case MTYPE_C8: case MTYPE_C10: case MTYPE_CQ:
+#else
+  case MTYPE_U1: case MTYPE_U2: case MTYPE_I1: case MTYPE_I2:
+  case MTYPE_C4: case MTYPE_C8: case MTYPE_CQ: case MTYPE_FQ:
+#endif
       alclass = ALCLASS_CRITICAL;
       break;
 
@@ -2997,19 +3009,14 @@ Apply_Par_Region_Default_Scopes(WN *wn, ST_TO_BOOL_HASH *processed,
  * Apply_Default_Scopes().
  *
  * Perform these checks on final scopes: (1) THREADPRIVATE common blocks
- * and variables in them can't appear in any scope clauses; (2) privatized
- * and REDUCTION variables in a worksharing construct lexically enclosed
- * by a parallel region must have shared scope in the parallel region.
+ * and variables in them can't appear in any scope clauses; (2) FIRSTPRIVATE,
+ * LASTPRIVATE and REDUCTION variables in a worksharing construct lexically 
+ * enclosed by a parallel region must have shared scope in the parallel
+ * region.
  *
- * As exceptions to the rule against reprivatization, we allow:
- *   (a) An implicit PRIVATE(i) on a parallel region that contains a PDO
- *       with a PRIVATE(i), if "i" is the PDO index variable (this can
- *       result from implicit privatization of PDO index variables).
- *   (b) If both the outer and inner pragmas are PRIVATE and compiler-
- *       generated. In this case we delete the inner PRIVATE. This can
- *       result from inlining.
- *       KEY: I don't see why the inner pragma also needs to be compiler-
- *            generated. bug 6428 shows why !compiler-generated is valid.
+ * For a PRIVATE variable in a worksharing construct lexically enclosed by
+ * a parall region, if it's not shared in that parallel region, just ignore
+ * the inner PRIVATE clause. (Reprivatization is legal)
  *
  * Parameters:
  *  wn : in/out : Whirl tree in which to perform privatization
@@ -3046,7 +3053,7 @@ Privatize_Index_Vars_And_Check_Final_Scopes(
     // check final scopes within parallel construct when we first reach
     // the construct
   if (is_worksharing || is_par_region) {
-      // exception case (a) and (b) reprivatizing pragmas to be removed
+      // reprivatizing pragmas to be removed
     WN_LIST reprivatizing_pragmas(&omp_pool);
 
     for (WN *prag = WN_first(WN_region_pragmas(wn)); prag;
@@ -3097,36 +3104,22 @@ Privatize_Index_Vars_And_Check_Final_Scopes(
           // parallel region is OK: PV 626400)
         continue; // skip reprivatization checks
 
-        // Check that REDUCTION and PRIVATE variables in an enclosed
-	// worksharing construct are shared in enclosing parallel region.
-	// Allow exception cases (a) and (b), described above.
       switch (prag_id) {
+	//Check reprivatization variables.
       case WN_PRAGMA_LOCAL:
+        if (Var_Scope(st, pragma_block_list, &how, &scope_prag) ==
+            WN_PRAGMA_DEFAULT_PRIVATE) // reprivatization
+          reprivatizing_pragmas.AddElement(prag);
+	break;
+
+        // Check that REDUCTION, FIRSTPRIVATE, LASTPRIVATE variables in an enclosed
+	// worksharing construct are shared in enclosing parallel region.
       case WN_PRAGMA_LASTLOCAL:
       case WN_PRAGMA_FIRSTPRIVATE:
       case WN_PRAGMA_REDUCTION:
         if (Var_Scope(st, pragma_block_list, &how, &scope_prag) !=
             WN_PRAGMA_DEFAULT_PRIVATE)
           break;  // no reprivatization
-
-        if (prag_id == WN_PRAGMA_LOCAL &&
-            Index_Priv_From_OMPL->Find(scope_prag)) {
-          reprivatizing_pragmas.AddElement(prag);
-	  break;  // exception case (a)
-        }
-
-	if (WN_pragma(scope_prag) == WN_PRAGMA_LOCAL &&
-	    prag_id == WN_PRAGMA_LOCAL &&
-	    WN_pragma_compiler_generated(scope_prag)
-#ifndef KEY
-	    // bug 6428
-	    && WN_pragma_compiler_generated(prag)
-#endif // !KEY
-	    )
-        {
-          reprivatizing_pragmas.AddElement(prag);
-	  break;  // exception case (b)
-        }
 
         ErrMsgLine(prag_id == WN_PRAGMA_REDUCTION ?
                    EC_MPLOWER_red_of_private : EC_MPLOWER_reprivatization,

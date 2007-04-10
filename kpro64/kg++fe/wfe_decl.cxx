@@ -1,5 +1,9 @@
+/*
+ * Copyright (C) 2006. QLogic Corporation. All Rights Reserved.
+ */
+
 /* 
-   Copyright 2003, 2004, 2005 PathScale, Inc.  All Rights Reserved.
+   Copyright 2003, 2004, 2005, 2006 PathScale, Inc.  All Rights Reserved.
    File modified October 9, 2003 by PathScale, Inc. to update Open64 C/C++ 
    front-ends to GNU 3.3.1 release.
  */
@@ -102,6 +106,7 @@ static void WFE_Handle_Named_Return_Value(tree fn);
 // the DECL_INITIAL in the object's VAR_DECL.
 // IMPORTANT:  Doesn't work for nested functions.
 tree named_ret_obj_initializer;
+extern "C" BOOL pragma_implementation_seen, pragma_interface_seen;
 #endif /* KEY */
 
 static tree *deferred_function_stack;
@@ -387,10 +392,20 @@ WFE_Expand_Function_Body (tree decl)
 
 #ifdef KEY
   WFE_Handle_Named_Return_Value(decl);
+
+  // bug 11869: This example shows there may be a label statement
+  // without an explicit scope. In such a scenario, a jump to such
+  // a label would find incomplete scope information, and hence not
+  // know what cleanups to run. Always have a top-level-scope that
+  // covers the entire function.
+  Push_Top_Level_Scope(decl);
 #endif
 
   for (body = DECL_SAVED_TREE(decl); body; body = TREE_CHAIN(body))
     Mark_Scopes_And_Labels (body);
+#ifdef KEY // bug 11869
+  Pop_Top_Level_Scope();
+#endif
 
   for (body = DECL_SAVED_TREE(decl); body; body = TREE_CHAIN(body))
     WFE_Expand_Stmt(body);
@@ -690,8 +705,10 @@ void WFE_Expand_Decl(tree decl)
       break;
    
     case TYPE_DECL: {
+#ifndef KEY // bug 7341: Generate types only on demand
       tree type = TREE_TYPE(decl);
       (void) Get_TY(type);
+#endif
       break;
     }
 
@@ -735,7 +752,11 @@ void WFE_Expand_Decl(tree decl)
   	  tree init_type = TREE_TYPE(init);
 	  if (TREE_CODE(init_type) != RECORD_TYPE &&
 	      TREE_CODE(init_type) != ARRAY_TYPE  &&
-	      TREE_CODE(init_type) != UNION_TYPE)
+	      TREE_CODE(init_type) != UNION_TYPE
+#ifdef KEY
+	      && TREE_CODE(init_type) != VECTOR_TYPE
+#endif
+	     )
 	    return;
 	  }
 
@@ -760,6 +781,11 @@ function_has_varargs(tree fndecl)
 {
   tree fntype  = TREE_TYPE(fndecl);
   tree arglist = TYPE_ARG_TYPES(fntype);
+
+#ifdef KEY // bug 9688: cannot be vararg if there is not a single argument
+  if (arglist == NULL_TREE)
+    return FALSE;
+#endif
 
   while (arglist != NULL_TREE) {
     if (TREE_VALUE(arglist) == void_type_node)
@@ -1018,13 +1044,47 @@ WFE_Start_Function (tree fndecl)
 
     ST        *func_st;
 #ifdef KEY
+    static BOOL interface_only = (!pragma_implementation_seen || !pragma_interface_seen);
+
     // Under g++ 3.2 -O3, don't test for DECL_INLINE because DECL_INLINE is 1
     // for every function.  g++ considers every function as a potential inline
     // candidate.
     ST_EXPORT  eclass;
-    if (TREE_PUBLIC(fndecl) || DECL_WEAK(fndecl)) {
+    // Ensure the following categories of functions can be inlined and DFE'd:
+    // 1) 7.1.2.4: An inline function shall be defined in every translation
+    //             unit in which it is used and shall have exactly the same
+    //             definition in every case.
+    //    So functions marked inline are eligible for DFE.
+    // 2) A class member function defined within the class (covered by 1).
+    // 3) A template function, currently limited to non-member functions.
+    // TODO: A::B<U>::C() (from bug 7976) should not be internal,
+    // but A::B<U>::C<S>() should be.
+    // To be marked XINTERNAL, the above functions must be marked 
+    // WEAK (bug 7670)
+    //
+    // The fix for bug 8211 makes the fix for bug 7550 more conservative.
+    // If we have seen both the implementation and interface pragmas, then
+    // we assume the worst case and disable the following optimization.
+    // Ideally CLASSTYPE_INTERFACE_ONLY should be set, but that value
+    // does not propagate correctly here. Also note presence of both pragmas
+    // could imply disabling the optimization for one header file, but we
+    // don't have a way of knowing that, so we assume it for the entire
+    // translation unit.
+    //
+    if (interface_only &&
+        DECL_WEAK (fndecl) &&
+        (DECL_DECLARED_INLINE_P (fndecl) ||
+         (DECL_LANG_SPECIFIC (fndecl) &&
+          DECL_IMPLICIT_INSTANTIATION (fndecl) &&
+          DECL_NAMESPACE_SCOPE_P (fndecl))))
+      eclass = EXPORT_INTERNAL; // bug 7550
+    else if (TREE_PUBLIC(fndecl) || DECL_WEAK(fndecl)) {
+#ifdef TARG_IA64
       if (Gp_Save_Restore_Opt && Use_Call_Shared_Link &&
           (DECL_INLINE(fndecl) || !DECL_WEAK(fndecl)))
+#else
+      if (DECL_INLINE(fndecl) || !DECL_WEAK(fndecl))
+#endif
 	eclass = EXPORT_PROTECTED;
       else eclass = EXPORT_PREEMPTIBLE;
     }
@@ -1059,6 +1119,10 @@ WFE_Start_Function (tree fndecl)
     Set_PU_lexical_level (Pu_Table [ST_pu (func_st)], CURRENT_SYMTAB);
     Set_PU_cxx_lang (Pu_Table [ST_pu (func_st)]);
 
+#ifdef KEY
+    if (DECL_DECLARED_INLINE_P(fndecl))
+      Set_PU_is_marked_inline (Pu_Table [ST_pu (func_st)]);
+#endif
     if (DECL_INLINE(fndecl)) {
       Set_PU_is_inline_function (Pu_Table [ST_pu (func_st)]);
       wfe_invoke_inliner = TRUE;
@@ -1352,7 +1416,6 @@ WFE_Start_Function (tree fndecl)
 	  WEAK_WORKAROUND(func_st) == WEAK_WORKAROUND_made_weak) {
 	Clear_ST_is_weak_symbol(func_st);
       }
-      WEAK_WORKAROUND(func_st) == WEAK_WORKAROUND_dont_make_weak;
     }
 #endif
 
@@ -1547,6 +1610,7 @@ WFE_Add_Init_Block(void)
   last_aggregate_initv = inv_blk;
 }
 
+#ifdef TARG_IA64
 void 
 WFE_Add_Aggregate_Init_Real (REAL_VALUE_TYPE real, INT size)
 {
@@ -1578,7 +1642,75 @@ WFE_Add_Aggregate_Init_Real (REAL_VALUE_TYPE real, INT size)
     Set_INITO_val(aggregate_inito, inv);
   last_aggregate_initv = inv;
 } /* WGE_Add_Aggregate_Init_Real */
+#else
+#ifdef KEY	// kgccfe uses WFE_Add_Aggregrate_Init_Real instead of
+		// WFE_Add_Aggregate_Init_Double.  Use the former because it is
+		// newer and can handle REAL_VALUE_TYPE, which is needed for
+		// i386.
+	
+void 
+WFE_Add_Aggregate_Init_Real (REAL_VALUE_TYPE real, INT size)
+{
+  if (aggregate_inito == 0) return;
+  INITV_IDX inv = New_INITV();
+  TCON    tc;
+  int     t1;
+#ifdef KEY
+  long     buffer [4];
+#else	
+// KEY is already defined above, but this is just to keep what we had earlier
+  int     buffer [4];
+#endif // KEY
+  switch (size) {
+    case 4:
+      REAL_VALUE_TO_TARGET_SINGLE (real, t1);
+      tc = Host_To_Targ_Float_4 (MTYPE_F4, *(float *) &t1);
+      break;
+    case 8:
+      REAL_VALUE_TO_TARGET_DOUBLE (real, buffer);
+      WFE_Convert_To_Host_Order(buffer);
+      tc = Host_To_Targ_Float (MTYPE_F8, *(double *) &buffer);
+      break;
+#ifdef KEY
+    case 12:
+    case 16:
+      REAL_VALUE_TO_TARGET_LONG_DOUBLE (real, buffer);
+      WFE_Convert_To_Host_Order(buffer);
+      tc = Host_To_Targ_Quad (*(long double *) &buffer);
+      break;
+#endif
+    default:
+      FmtAssert(FALSE, ("WFE_Add_Aggregate_Init_Real unexpected size"));
+      break;
+  }
+  INITV_Set_VAL (Initv_Table[inv], Enter_tcon(tc), 1);
+  if (last_aggregate_initv != 0)
+    Set_INITV_next(last_aggregate_initv, inv);
+  else if (! not_at_root)
+    Set_INITO_val(aggregate_inito, inv);
+  last_aggregate_initv = inv;
+} /* WGE_Add_Aggregate_Init_Real */
 
+#else
+
+void 
+WFE_Add_Aggregate_Init_Double (double val, INT size)
+{
+  if (aggregate_inito == 0) return;
+  INITV_IDX inv = New_INITV();
+  TYPE_ID mtype;
+  if (size == 4) mtype = MTYPE_F4;
+  else if (size == 8) mtype = MTYPE_F8;
+  else FmtAssert(FALSE, ("WFE_Add_Aggregate_Init_Double unexpected size"));
+  INITV_Init_Float (inv, mtype, val);
+  if (last_aggregate_initv != 0)
+    Set_INITV_next(last_aggregate_initv, inv);
+  else if (! not_at_root)
+    Set_INITO_val(aggregate_inito, inv);
+  last_aggregate_initv = inv;
+}
+#endif	// KEY
+#endif
 void 
 WFE_Add_Aggregate_Init_Complex (REAL_VALUE_TYPE rval, REAL_VALUE_TYPE ival, INT size)
 {
@@ -1649,7 +1781,7 @@ WFE_Add_Aggregate_Init_Symoff (ST *st, WN_OFFSET offset = 0)
   last_aggregate_initv = inv;
 }
 
-
+#ifdef TARG_IA64
 void
 WFE_Add_Aggregate_Init_Symiplt (ST *st, WN_OFFSET offset = 0)
 {
@@ -1663,6 +1795,7 @@ WFE_Add_Aggregate_Init_Symiplt (ST *st, WN_OFFSET offset = 0)
     Set_INITO_val(aggregate_inito, inv);
   last_aggregate_initv = inv;
 }
+#endif
 
 void
 WFE_Add_Aggregate_Init_Label (LABEL_IDX lab)
@@ -1935,6 +2068,8 @@ Add_Initv_For_Tree (tree val, UINT size)
 		  break;
 		}
 #endif
+		
+#ifdef TARG_IA64
 	       if (TREE_CODE(val) == FDESC_EXPR && WN_operator (init_wn) == OPR_LDA)
 	       {
 	       	       WFE_Add_Aggregate_Init_Symiplt (WN_st (init_wn),
@@ -1942,6 +2077,8 @@ Add_Initv_For_Tree (tree val, UINT size)
 	               WN_DELETE_Tree (init_wn);
 	               break;
 	        }
+#endif
+
 		if (WN_operator (init_wn) == OPR_LDA) {
 			WFE_Add_Aggregate_Init_Symoff (WN_st (init_wn),
 						       WN_offset (init_wn));
@@ -2104,7 +2241,7 @@ Gen_Assign_Of_Init_Val (ST *st, tree init, UINT offset, UINT array_elem_offset,
       return;
     }
 #endif
-    
+
     WN *init_wn = WFE_Expand_Expr (init);
     // bug fix for OSP_229
     //
@@ -2330,6 +2467,7 @@ Traverse_Aggregate_Struct (
   // nonempty nonvirtual base class.
   // these are generated first in Create_TY_For_Tree (tree_symtab.cxx)
 
+#ifndef KEY     // g++'s class.c already laid out the base types.  Bug 11622.
   if (TYPE_BINFO(type) &&
       BINFO_BASETYPES(TYPE_BINFO(type))) {
     tree basetypes = BINFO_BASETYPES(TYPE_BINFO(type));
@@ -2345,6 +2483,7 @@ Traverse_Aggregate_Struct (
       }
     }
   }
+#endif
 
   while (field && TREE_CODE(field) != FIELD_DECL)
     field = next_real_or_virtual_field(type, field);
@@ -2463,6 +2602,60 @@ Traverse_Aggregate_Struct (
   return field_id;
 } /* Traverse_Aggregate_Struct */
 
+#ifdef KEY
+// The aggregate element for the specified symbol at the current_offset
+// is a vector.
+// If gen_initv is FALSE generate a sequence of stores.
+void
+Traverse_Aggregate_Vector (
+  ST * st,             // symbol being initialized
+  tree init_list,      // list of initializers for units in vector
+  BOOL gen_initv,      // TRUE if initializing with INITV, FALSE for statements
+  UINT current_offset, // offset from start of symbol for current vector
+  BOOL vec_cst = FALSE)// init_list is a constant or not
+{
+  tree init;
+  INT emitted_bytes = 0;
+
+  if (vec_cst)
+    init = TREE_VECTOR_CST_ELTS (init_list);
+  else
+    init = CONSTRUCTOR_ELTS (init_list);
+
+  for (;
+       init;
+       init = TREE_CHAIN(init))
+  {
+    tree unit_type = TREE_TYPE(TREE_VALUE(init));
+    tree size = TYPE_SIZE (unit_type);
+    Is_True (TREE_CODE (size) == INTEGER_CST,
+             ("Traverse_Aggregate_Vector: Vector of variable-sized units?"));
+    UINT esize = Get_Integer_Value(size) / BITSPERBYTE;
+    if (gen_initv)
+    {
+      Add_Initv_For_Tree (TREE_VALUE(init), esize);
+      emitted_bytes += esize;
+    }
+    else
+      Gen_Assign_Of_Init_Val (st, TREE_VALUE(init),
+                              current_offset, 0,
+                              Get_TY(unit_type),
+                              0, 0, FLD_HANDLE(), emitted_bytes);
+    current_offset += esize;
+  }
+} /* Traverse_Aggregate_Vector */
+
+void
+Traverse_Aggregate_Vector_Const (
+  ST * st,             // symbol being initialized
+  tree init_list,      // list of initializers for units in vector
+  BOOL gen_initv,      // TRUE if initializing with INITV, FALSE for statements
+  UINT current_offset) // offset from start of symbol for current vector
+{
+  Traverse_Aggregate_Vector (st, init_list, gen_initv, current_offset, TRUE);
+}
+#endif
+
 // The aggregate element for the specified symbol at the current_offset
 // is either an array or  struct/class/union having the gcc tree type 'type'.
 // If gen_initv is TRUE build an initv, otherwise generate a sequence
@@ -2509,6 +2702,14 @@ Traverse_Aggregate_Constructor (
 
     Traverse_Aggregate_Array (st, init_list, type, gen_initv, current_offset);
   }
+
+#ifdef KEY // bug 9550
+  else
+  if (TY_kind (ty) == KIND_SCALAR && MTYPE_is_vector (TY_mtype (ty))) {
+
+    Traverse_Aggregate_Vector (st, init_list, gen_initv, current_offset);
+  }
+#endif
 
   else
     Fail_FmtAssertion ("Traverse_Aggregate_Constructor: non STRUCT/ARRAY");
@@ -2564,10 +2765,15 @@ Add_Inito_For_Tree (tree init, ST *st)
   case STRING_CST:
 	aggregate_inito = New_INITO (st);
 	not_at_root = FALSE;
-	WFE_Add_Aggregate_Init_String (const_cast<char*>TREE_STRING_POINTER(init),  // KEY
-                                       TY_size(ST_type(st)) != 0 ?
-                                       TY_size(ST_type(st)) :
+	WFE_Add_Aggregate_Init_String (const_cast<char*>TREE_STRING_POINTER(init),
+#ifdef KEY // null character added can cause string length to exceed var length
+				       TY_size(ST_type(st)) < TREE_STRING_LENGTH(init) ?
+				       TY_size(ST_type(st)) :
+#endif
                                        TREE_STRING_LENGTH(init));
+	if (TY_size (ST_type(st)) > TREE_STRING_LENGTH(init))
+		WFE_Add_Aggregate_Init_Padding ( TY_size (ST_type(st)) -
+						 TREE_STRING_LENGTH(init));
 	return;
   case NOP_EXPR:
 	Add_Inito_For_Tree (TREE_OPERAND(init,0), st);
@@ -3295,6 +3501,23 @@ WFE_Process_Template_Decl (tree decl)
   }
 } /* WFE_Process_Template_Decl */
 
+#ifdef KEY
+// Return TRUE if DECL is a needed VTT (virtual table table).
+bool
+decl_is_needed_vtt (tree decl)
+{
+  bool needed = false;
+
+  // Assume all VTTs are needed.
+  if (DECL_NAME(decl) &&
+      IDENTIFIER_POINTER(DECL_NAME(decl)) &&
+      !strncmp("_ZTT", IDENTIFIER_POINTER(DECL_NAME(decl)), 4)) {
+    needed = true;
+  }
+  return needed;
+}
+#endif
+
 bool
 decl_is_needed_vtable (tree decl)
 {
@@ -3361,19 +3584,6 @@ decl_is_needed_vtable (tree decl)
   return needed;
 }
 
-// Return TRUE if DECL is a needed VTT (virtual table table).
-bool
-decl_is_needed_vtt (tree decl)
-{
-  bool needed = false;
-// Assume all VTTs are needed.
-  if (DECL_NAME(decl) &&
-      IDENTIFIER_POINTER(DECL_NAME(decl)) &&
-      !strncmp("_ZTT", IDENTIFIER_POINTER(DECL_NAME(decl)), 4)) {
-	  needed = true;
-  }
-  return needed;
-}
 void
 WFE_Process_Var_Decl (tree decl)
 {
@@ -3383,8 +3593,12 @@ WFE_Process_Var_Decl (tree decl)
 //    !DECL_WEAK(decl)     &&
       !DECL_EXTERNAL(decl) &&
       !DECL_ST(decl)) {
-    if (!DECL_WEAK(decl) || decl_is_needed_vtable (decl)
-	|| decl_is_needed_vtt(decl)) {	//if decl is a needed VTT, also expand 
+    if (!DECL_WEAK(decl)
+	|| decl_is_needed_vtable (decl)
+#ifdef KEY
+	|| decl_is_needed_vtt (decl)	// Bug 7442.
+#endif
+        ) {
 #ifdef KEY
       WFE_Expand_Decl(decl);
 #else
@@ -3638,9 +3852,8 @@ WFE_Expand_Top_Level_Decl (tree top_level_decl)
 
   {
     // Set the type for fields whose type we want to set last.
-    // OSP_228
-    // The defer_fields is changed during iteration, so can not use the iterator
-    for(int i=0; i<defer_fields.size(); i++) {
+    // Don't use iterator because defer_fields may grow.
+    for (int i = 0; i < defer_fields.size(); i++) {
       tree field = defer_fields[i].first;
       FLD_HANDLE fld = defer_fields[i].second;
       Is_True(TREE_CODE(field) == FIELD_DECL,

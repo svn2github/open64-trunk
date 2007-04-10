@@ -1,5 +1,5 @@
 /* 
- * Copyright 2003, 2004, 2005 PathScale, Inc.  All Rights Reserved.
+ * Copyright 2003, 2004, 2005, 2006 PathScale, Inc.  All Rights Reserved.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of version 2 of the GNU General Public License as
@@ -82,6 +82,9 @@ extern void template_substituted (tree, tree, tree);
 extern tree get_substituted (tree, tree);
 extern void push_mp_local_vars (tree);
 extern tree pop_mp_local_vars (void);
+
+// Initialize a vector.
+extern void Traverse_Aggregate_Vector_Const (ST *, tree, BOOL, UINT);
 #endif /* KEY */
 
 /* called for each aggregate initialization */

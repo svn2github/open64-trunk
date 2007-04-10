@@ -1,4 +1,8 @@
 /*
+ * Copyright 2004, 2005, 2006 PathScale, Inc.  All Rights Reserved.
+ */
+
+/*
 
   Copyright (C) 2000, 2001 Silicon Graphics, Inc.  All Rights Reserved.
 
@@ -461,6 +465,10 @@ extern BOOL CG_LOOP_optimize_non_innermost;
 extern BOOL CG_LOOP_optimize_multi_targ;
 extern BOOL CG_LOOP_optimize_non_trip_countable;
 
+#ifdef KEY
+extern INT32 CG_Enable_Loop_Opt_Limit;
+#endif
+
 /* Exported functions.
  */
 extern void CG_LOOP_Init();
@@ -560,8 +568,10 @@ private:
   BB         *epilog_start;
   BB         *epilog_end;
   BB         *trip_count_bb;  // The BB contains the trip count expr
+#ifdef TARG_IA64
   INT32      acyclic_len; 
   INT32      acyclic_len_wo_dspec;
+#endif
 
   void Attach_Prolog_And_Epilog(LOOP_DESCR *loop);
 
@@ -586,10 +596,12 @@ public:
   void Set_unroll_fully()         { unroll_fully = TRUE; }
   INT32 Unroll_factor() const     { return unroll_factor; }
   void Set_unroll_factor(INT32 n) { unroll_factor = n; }
+#ifdef TARG_IA64
   INT32 Acyclic_len (void) const  { return acyclic_len; }
   void Set_acyclic_len (INT32 len) { acyclic_len = len; }
   INT32 Acyclic_len_wo_dspec (void) const { return acyclic_len_wo_dspec; }
   void Set_acyclic_len_wo_dspec (INT32 len) { acyclic_len_wo_dspec = len; }
+#endif
 
   void Recompute_Liveness();
   bool Determine_Unroll_Fully();
@@ -664,9 +676,13 @@ struct OP_VECTOR {
 
 extern CG_LOOP *Current_CG_LOOP;
 
+#ifdef TARG_IA64
 extern void Perform_Loop_Optimizations(void *rgn_loop_update=NULL);
 extern BOOL CG_LOOP_Optimize(LOOP_DESCR *loop, SWP_FIXUP_VECTOR& fixup, void **, void *);
-
+#else
+extern void Perform_Loop_Optimizations();
+extern BOOL CG_LOOP_Optimize(LOOP_DESCR *loop, SWP_FIXUP_VECTOR& fixup);
+#endif
 
 extern BOOL Perform_SWP(CG_LOOP& cl, SWP_FIXUP_VECTOR& fixup, bool is_doloop);
 

@@ -1,5 +1,9 @@
 /*
- * Copyright 2003, 2004, 2005 PathScale, Inc.  All Rights Reserved.
+ * Copyright (C) 2007. QLogic Corporation. All Rights Reserved.
+ */
+
+/*
+ * Copyright 2003, 2004, 2005, 2006 PathScale, Inc.  All Rights Reserved.
  */
 
 /*
@@ -325,7 +329,8 @@ Perform_Interprocedural_Analysis ()
 	  if(tmp_call_graph != NULL)
 	  {	  
 	    fprintf(tmp_call_graph, "\t+++++++++++++++++++++++++++++++++++++++\n");
-  	    IPA_Call_Graph->Print(tmp_call_graph);
+	    // KEY
+  	    IPA_Call_Graph->Print_vobose(tmp_call_graph);
 	    fprintf(tmp_call_graph, "\t+++++++++++++++++++++++++++++++++++++++\n");
 	  }
 	  fclose(tmp_call_graph);
@@ -383,7 +388,7 @@ Perform_Interprocedural_Analysis ()
 	    }
 	  }
 
-    	  if (Opt_Options_Inconsistent)
+    	  if (IPA_Enable_Source_PU_Order || Opt_Options_Inconsistent)
 	    for (UINT i = 0; i < IP_File_header.size(); ++i)
 	    { // Store the file-id in each IPA_NODE
 	      Mark_PUs_With_File_Id (IP_FILE_HDR_pu_list (IP_File_header[i]), i);

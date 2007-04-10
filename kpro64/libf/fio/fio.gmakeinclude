@@ -107,6 +107,7 @@ CFILES += \
     s2uo.c \
     s2uz.c \
     scatgath.c \
+    setbuf.c \
     setstride.c \
     stats.c \
     tables.c \
@@ -135,6 +136,14 @@ CFILES += \
     $(IRFILES)
 
 ifeq ($(BUILD_TARGET), IA64)
+CFILES += main.c
+endif
+
+ifeq ($(BUILD_TARGET), X8664)
+CFILES += main.c
+endif
+
+ifeq ($(BUILD_TARGET), IA32)
 CFILES += main.c
 endif
 

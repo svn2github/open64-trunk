@@ -1,5 +1,5 @@
 /*
- * Copyright 2003, 2004, 2005 PathScale, Inc.  All Rights Reserved.
+ * Copyright 2003, 2004, 2005, 2006 PathScale, Inc.  All Rights Reserved.
  */
 
 /*
@@ -61,7 +61,7 @@
 
 #ifdef _KEEP_RCS_ID
 /*REFERENCED*/
-static char *config_opt_rcs_id = "$Source: /proj/osprey/CVS/open64/osprey1.0/common/com/config_opt.cxx,v $ $Revision: 1.1.1.1 $";
+static char *config_opt_rcs_id = "$Source: common/com/SCCS/s.config_opt.cxx $ $Revision: 1.35 $";
 #endif /* _KEEP_RCS_ID */
 
 /* This file is included in config.c, so it doesn't need its own set of
@@ -84,7 +84,11 @@ BOOL Show_OPT_Warnings = TRUE;          /* Display OPT warning messages */
 OPTION_LIST *Alias_Option = NULL;
 BOOL Alias_Pointer_Parms = TRUE;        /* Parms ptr indep? */
 BOOL Alias_Pointer_Cray = FALSE;        /* Cray pointer semantics? */
+#ifdef TARG_IA64
 BOOL Alias_Pointer_Types = TRUE;	/* Ptrs to distinct basic types indep? */
+#else
+BOOL Alias_Pointer_Types = FALSE;       /* Ptrs to distinct basic types indep? */
+#endif
 BOOL Alias_Not_In_Union  = FALSE;	/* Ptrs point to non-union types */
 BOOL Alias_Pointer_Strongly_Typed = FALSE; /* Ptrs to distinct types indep? */
 BOOL Alias_Pointer_Named_Data = FALSE;	/* No pointers to named data? */
@@ -96,7 +100,11 @@ BOOL Alias_Common_Scalar = FALSE;       /* Distinguish scalar from array */
  * for use in overriding the default -- not intended for user use.
  */
 static BOOL Alias_Pointer_Cckr = FALSE;	/* -cckr default rules? */
+#ifdef TARG_IA64
+static BOOL Alias_Pointer_Types_Set = TRUE;	/* alias=typed set? */
+#else
 static BOOL Alias_Pointer_Types_Set = FALSE;	/* alias=typed set? */
+#endif
 static BOOL Alias_Not_In_Union_Set  = FALSE;	/* alias=nounion set? */
 BOOL  Alias_F90_Pointer_Unaliased = FALSE;  /* Are F90 pointers unaliased? */
 
@@ -131,7 +139,13 @@ BOOL Fast_IO_Allowed = FALSE;		/* Fast printf/scanf/printw ? */
 static BOOL Fast_IO_Set = FALSE;	/* ... option seen? */
 BOOL Fast_Sqrt_Allowed = FALSE;		/* sqrt(x) --> x * rsqrt(x) ? */
 static BOOL Fast_Sqrt_Set = FALSE;	/* ... option seen? */
+#ifdef TARG_X8664
+UINT32 Rsqrt_Allowed = 0;		/* 0: use SQRT and DIV		    */
+					/* 1: use RSQRT with Newton-Raphson */
+					/* 2: use RSQRT			    */
+#else
 BOOL Rsqrt_Allowed = FALSE;		/* generate RSQRT instruction? */
+#endif
 static BOOL Rsqrt_Set = FALSE;		/* ... option seen? */
 BOOL Recip_Allowed = FALSE;	        /* generate RECIP instruction? */
 static BOOL Recip_Set = FALSE;		/* ... option seen? */
@@ -156,8 +170,14 @@ BOOL GCM_Speculative_Ptr_Deref= TRUE;  /* allow load speculation of a memory
 BOOL GCM_Speculative_Ptr_Deref_Set=FALSE;   /* ... option seen? */
 
 /***** Limits on optimization *****/
+#ifdef TARG_IA64
 #define DEFAULT_OLIMIT		24000
 #define DEFAULT_O3_OLIMIT	30000	/* allow more time for -O3 compiles */
+#else
+#define DEFAULT_OLIMIT          6000
+#define DEFAULT_O3_OLIMIT       9000    /* allow more time for -O3 compiles */
+#endif
+
 #define MAX_OLIMIT		INT32_MAX
 INT32 Olimit = DEFAULT_OLIMIT;
 static BOOL Olimit_Set = FALSE;
@@ -204,8 +224,10 @@ BOOL OPT_shared_memory = TRUE;	// assume use of shared memory
 /* Put each function in its own text section */
 BOOL Section_For_Each_Function = FALSE;
 BOOL Inline_Intrinsics_Early=FALSE;    /* Inline intrinsics just after VHO */
-BOOL Enable_extract_compose=TRUE;     /* This is also forced off for MIPS and IA32 in
-					  config_targ.cxx */
+BOOL Enable_extract_bits=TRUE;     /* This is also forced off for MIPS and IA32 in
+                                          config_targ.cxx */
+BOOL Enable_compose_bits=FALSE;
+
 #ifdef __linux__
 BOOL Enable_WFE_DFE = FALSE;
 #endif /* __linux __ */
@@ -239,12 +261,27 @@ BOOL   OPT_Enable_Simp_Fold = TRUE;  /* enables new float/complex/str/intrinsic 
 /* Use Fast Math equivalents (currently from ACML 2.0) 
    for the math library functions. */
 BOOL  OPT_Fast_Math = FALSE; 
+static BOOL OPT_Fast_Math_Set = FALSE; 
 
 /* Use fast standard library equivalents for some libc functions. */
 BOOL  OPT_Fast_Stdlib = TRUE;
 
 /* Internal flag to control MP barrier optimization */
 BOOL OPT_MP_Barrier_Opt = FALSE;
+
+BOOL OPT_Icall_Instr = TRUE;	/* enables icall profiling */
+BOOL OPT_Int_Value_Instr = TRUE;/* enables integer value profiling */
+BOOL OPT_FP_Value_Instr = TRUE;	/* enables value_fp_bin profiling */
+
+/* The following flags are set by GNU-compatible flags, these in turn
+   enable other backend optimizations. */
+BOOL OPT_Ffast_Math = FALSE;
+static BOOL OPT_Ffast_Math_Set = FALSE;
+BOOL OPT_Funsafe_Math_Optimizations = FALSE;
+static BOOL OPT_Funsafe_Math_Optimizations_Set = FALSE;
+BOOL    OPT_Float_Via_Int = FALSE; // when on, perform FP copies using int regs
+
+UINT32 OPT_Malloc_Alg = 0;      /* select malloc algorithm */
 #endif
 
 /***** Obsolete options *****/
@@ -333,7 +370,11 @@ static OPTION_DESC Options_OPT[] = {
     "New foldings in simplifier" },
 
   { OVK_BOOL, OV_VISIBLE, 	TRUE,	"fast_math", 	"",
+#ifdef TARG_IA64
     0, 0, 0, &OPT_Fast_Math, NULL,
+#else
+    0, 0, 0, &OPT_Fast_Math, &OPT_Fast_Math_Set,
+#endif
     "Use Fast Math Library functions from ACML 2.0" },
 
   { OVK_BOOL, OV_VISIBLE, 	TRUE,	"fast_stdlib", 	"",
@@ -343,6 +384,34 @@ static OPTION_DESC Options_OPT[] = {
   { OVK_BOOL, OV_INTERNAL, 	TRUE,	"mp_barrier_opt", "",
     0, 0, 0, &OPT_MP_Barrier_Opt, NULL,
     "Optimize generation of barrier calls for OpenMP" },
+
+  { OVK_BOOL, OV_INTERNAL, 	TRUE,	"icall_instr", "",
+    0, 0, 0, &OPT_Icall_Instr, NULL,
+    "perform profiling of indirect calls to get their called functions" },
+
+  { OVK_BOOL, OV_INTERNAL, 	TRUE,	"int_value_instr", "",
+    0, 0, 0, &OPT_Int_Value_Instr, NULL,
+    "perform profiling of integer values" },
+
+  { OVK_BOOL, OV_INTERNAL, 	TRUE,	"fp_value_instr", "",
+    0, 0, 0, &OPT_FP_Value_Instr, NULL,
+    "perform profiling of floating-point values" },
+
+  { OVK_BOOL, OV_INTERNAL, 	TRUE,	"ffast_math", "",
+    0, 0, 0, &OPT_Ffast_Math, &OPT_Ffast_Math_Set,
+    "Determines conformance to IEEE-754 arithmetic rules" },
+
+  { OVK_BOOL, OV_INTERNAL, 	TRUE,	"funsafe_math_optimizations", "",
+    0, 0, 0, &OPT_Funsafe_Math_Optimizations,
+    &OPT_Funsafe_Math_Optimizations_Set,
+    "Determines conformance to IEEE-754 arithmetic rules" },
+  { OVK_BOOL, OV_INTERNAL,      TRUE,   "float_via_int", "",
+    0, 0, 0, &OPT_Float_Via_Int, NULL,
+    "perform floating-point memory copies using integer registers" },
+
+  { OVK_UINT32, OV_VISIBLE,     TRUE,   "malloc_algorithm", "malloc_alg",
+    0, 0, 1, &OPT_Malloc_Alg, NULL,
+    "Use alternate malloc algorithm" },
 #endif
 
   { OVK_BOOL,	OV_INTERNAL,	TRUE, "early_mp",		"early_mp",
@@ -513,9 +582,15 @@ static OPTION_DESC Options_OPT[] = {
     2, 0, 3,	&Roundoff_Level, &Roundoff_Set,
     "Level of acceptable departure from source roundoff semantics" },
 
+#ifdef TARG_X8664
+  { OVK_UINT32,	OV_VISIBLE,	TRUE, "rsqrt",		"rsqrt",
+    0, 0, 2,	&Rsqrt_Allowed, &Rsqrt_Set,
+    "How to use rsqrt instructions" },
+#else
   { OVK_BOOL,	OV_VISIBLE,	TRUE, "rsqrt",		"rsqrt",
     0, 0, 0,	&Rsqrt_Allowed, &Rsqrt_Set,
     "Allow use of rsqrt instruction" },
+#endif
 
   { OVK_BOOL,	OV_VISIBLE,	TRUE, "shared_memory",	"shared_mem",
     0, 0, 0,	&OPT_shared_memory, NULL,
@@ -667,9 +742,13 @@ static OPTION_DESC Options_OPT[] = {
     0, 0, 0,	&Delay_U64_Lowering, NULL,
     "Delay unsigned 64-bit lowering to after wopt" },
 
-  { OVK_BOOL,	OV_INTERNAL,	TRUE, "extract_deposit",	"extr",
-    0, 0, 0,	&Enable_extract_compose,	NULL,
-    "Enable use of extract/compose opcodes" },
+  { OVK_BOOL,   OV_INTERNAL,    TRUE, "extract_bits",   "extr",
+    0, 0, 0,    &Enable_extract_bits,   NULL,
+    "Enable use of extract opcode" },
+
+  { OVK_BOOL,   OV_INTERNAL,    TRUE, "compose_bits",   "",
+    0, 0, 0,    &Enable_compose_bits,   NULL,
+    "Enable use of compose opcode" },
 
   { OVK_BOOL, OV_VISIBLE,     FALSE, "ansi_setjmp",           "ansi_setjmp",
     0, 0, 0,  &LANG_Ansi_Setjmp_On,   &LANG_Ansi_Setjmp_Set,

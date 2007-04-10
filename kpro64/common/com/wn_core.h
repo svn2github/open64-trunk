@@ -1,5 +1,5 @@
 /*
- * Copyright 2003, 2004, 2005 PathScale, Inc.  All Rights Reserved.
+ * Copyright 2003, 2004, 2005, 2006 PathScale, Inc.  All Rights Reserved.
  */
 
 /*
@@ -1371,6 +1371,16 @@ inline BOOL WN_Is_Volatile_Mem(const WN *wn)
 #define WN_Reset_Label_Is_Handler_Begin(x) (WN_label_flag(x) &= \
 					  ~(WN_LABEL_HANDLER_BEGIN))
 
+#ifdef KEY
+#define WN_LABEL_NOT_USED 0x4
+#define WN_Label_Is_Not_Used(x)       (WN_label_flag(x) & \
+					    WN_LABEL_NOT_USED)
+#define WN_Set_Label_Is_Not_Used(x)   (WN_label_flag(x) |= \
+					    WN_LABEL_NOT_USED)
+#define WN_Reset_Label_Is_Not_Used(x) (WN_label_flag(x) &= \
+					  ~(WN_LABEL_NOT_USED))
+#endif
+
 #define WN_Set_IO_Library(x,y)  (WN_io_flag(x) = (y))
 #define WN_IO_Library(x)        ((IOLIB) WN_io_flag(x))
 
@@ -1555,6 +1565,11 @@ inline mINT16 WN_num_actuals(const WN *wn)
 #define PF_GET_CONFIDENCE(flag) (((flag) >> 28)  & 0xf)
 #define PF_GET_MANUAL(flag)     (((flag) >> 25) & 0x1)
 
+#ifdef KEY //bug 10953
+#define PF_GET_KEEP_ANYWAY(flag) (((flag) >> 26) & 0x1)
+#define PF_GET_NON_TEMPORAL(flag) (((flag) >> 27) & 0x1)
+#endif
+
 #define PF_SET_READ(flag)          flag &= 0xfeffffff
 #define PF_SET_WRITE(flag)         flag |= 0x01000000
 #define PF_SET_STRIDE_1L(flag, x)  flag = (((flag)&0xffffff00) | ((x)&0xff))
@@ -1562,6 +1577,14 @@ inline mINT16 WN_num_actuals(const WN *wn)
 #define PF_SET_CONFIDENCE(flag, x) flag = (((flag)&0x0fffffff) | ((x)&0xf)<<28)
 #define PF_SET_MANUAL(flag)        flag |= 0x02000000
 #define PF_UNSET_MANUAL(flag)      flag &= 0xfdffffff
+
+#ifdef KEY //bug 10953
+#define PF_SET_KEEP_ANYWAY(flag)   flag |= 0x04000000
+#define PF_UNSET_KEEP_ANYWAY(flag) flag &= 0xfbffffff
+#define PF_SET_NON_TEMPORAL(flag)  flag |= 0x08000000
+#define PF_UNSET_NON_TEMPORAL(flag) flag &= 0xf7ffffff
+#endif
+
 
 #define WN_pf_read(wn)       (((~(WN_prefetch_flag(wn))) >> 24) & 0x1)
 #define WN_pf_write(wn)      (((WN_prefetch_flag(wn))  >> 24) & 0x1)

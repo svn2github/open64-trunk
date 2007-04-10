@@ -1,5 +1,9 @@
 /*
- * Copyright 2003, 2004, 2005 PathScale, Inc.  All Rights Reserved.
+ *  Copyright (C) 2006. QLogic Corporation. All Rights Reserved.
+ */
+
+/*
+ * Copyright 2003, 2004, 2005, 2006 PathScale, Inc.  All Rights Reserved.
  */
 
 /*
@@ -94,7 +98,7 @@ extern BOOL WOPT_Enable_Aggressive_Doloop_Promotion;
 extern BOOL WOPT_Enable_Aggressive_IVR;
 extern BOOL WOPT_Enable_Aggressive_Lftr;
 extern BOOL WOPT_Enable_Aggressive_Phi_Simp;
-extern UINT32 WOPT_Enable_Autoaggstr_Reduction_Threshold;
+extern INT32 WOPT_Enable_Autoaggstr_Reduction_Threshold;
 extern BOOL WOPT_Enable_Alias_Classification;
 extern BOOL WOPT_Enable_Aggressive_Alias_Classification;
 extern BOOL  WOPT_Enable_Disambiguate_Heap_Obj;
@@ -224,7 +228,7 @@ extern BOOL WOPT_Enable_Rvivsym;	/* ignore vsym in chi lists */
 extern BOOL WOPT_Enable_Second_Alias_Class; /* repeat alias class for LNO */
 extern BOOL WOPT_Enable_Second_Order;
 extern BOOL WOPT_Enable_Simp_Iload;	/* simplifier folding iload */
-extern BOOL WOPT_Enable_Simple_If_Conv; /* enable simple if-conversion at CFG build time */
+extern INT32 WOPT_Enable_Simple_If_Conv; /* enable simple if-conversion at CFG build time */
 extern INT32 WOPT_Enable_If_Conv_Limit; /* max number of leaf nodes allowed in a
 					   simple expr in simple if conv */
 extern BOOL WOPT_Enable_If_Conv_For_Istore; /* if-conversion is applied if lhs is istore */
@@ -235,6 +239,7 @@ extern BOOL WOPT_Enable_SLT;
 extern BOOL WOPT_Enable_Small_Br_Target; /* Disable propagation into br BBs */
 extern BOOL WOPT_Enable_Source_Order;   /* trace BB's in source order */
 extern BOOL WOPT_Enable_Speculation_Defeats_LFTR;
+extern BOOL  WOPT_Enable_Str_Red_Use_Context; /* use loop content in SR decision */
 extern BOOL WOPT_Enable_SSA_Minimization; /* SSA minimization in SSAPRE */
 extern BOOL WOPT_Enable_SSA_PRE;
 extern BOOL WOPT_Enable_Store_PRE;
@@ -297,6 +302,12 @@ extern BOOL WOPT_Enable_Warn_Uninit;   // enable warning for detected uninitiali
 extern INT32 WOPT_Enable_WN_Unroll;	// 0: disable; 
 					// 1: unroll only loop bodies with IFs
 					// 2: unroll all loop bodies
+extern BOOL WOPT_Enable_IP_Mod_Ref;     // Use mod/ref information from IPA?
+extern BOOL WOPT_Enable_Invariant_Loop_Bounds; // enable assumption that all
+				   // induction loops' bounds are loop-invariant
+extern BOOL WOPT_Enable_Subword_Opt; // whether to replace 1- or 2-byte-sized
+			              // load/store with EXTRACT/COMPOSE
+extern BOOL WOPT_Enable_New_Vsym_Allocation;
 #endif
 extern BOOL  WOPT_Enable_WOVP; // For running write-once variable promotion
 #endif /* config_wopt_INCLUDED */

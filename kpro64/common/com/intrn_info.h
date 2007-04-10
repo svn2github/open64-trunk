@@ -1,5 +1,5 @@
 /*
- * Copyright 2004, 2005 PathScale, Inc.  All Rights Reserved.
+ * Copyright 2004, 2005, 2006 PathScale, Inc.  All Rights Reserved.
  */
 
 /*
@@ -74,11 +74,14 @@ typedef enum INTRN_RETKIND {
   IRETURN_V16F4,	     /* MTYPE_V16F4 */
   IRETURN_V16F8,	     /* MTYPE_V16F8 */
   IRETURN_V16C8,	     /* MTYPE_V16C8 */
-  IRETURN_V8I1,		     /* MTYPE_V8I1 */
-  IRETURN_V8I2,		     /* MTYPE_V8I2 */
-  IRETURN_V8I4,		     /* MTYPE_V8I4 */
+  IRETURN_M8I1,              /* MTYPE_M8I1 */
+  IRETURN_M8I2,              /* MTYPE_M8I2 */
+  IRETURN_M8I4,              /* MTYPE_M8I4 */
+  IRETURN_V16I8,             /* MTYPE_V16I8 */
+  IRETURN_V16I1,             /* MTYPE_V16I1 */
 #endif
-  IRETURN_PPU2,		     /* return type of ctype_b_loc():*/
+  IRETURN_PPU2,         /* return type of ctype_b_loc() */
+  IRETURN_PPI4,         /* return type of ctype_toupper_loc() and ctype_tolower_loc() */
 } INTRN_RETKIND;
 #define INTRN_RETKIND_LAST IRETURN_F10
 

@@ -1,5 +1,9 @@
 /*
- * Copyright 2003, 2004 PathScale, Inc.  All Rights Reserved.
+ * Copyright (C) 2007. QLogic Corporation. All Rights Reserved.
+ */
+
+/*
+ * Copyright 2003, 2004, 2005, 2006 PathScale, Inc.  All Rights Reserved.
  */
 
 /*
@@ -70,6 +74,8 @@
 
 #ifdef KEY
 #include "ipa_builtins.h"
+#include "ir_bcom.h"
+#include "be_ipa_util.h"
 #endif
 
 
@@ -155,6 +161,10 @@ extern "C" void IP_write_global_symtab(void)
 
   WN_write_globals(symtab_file);
   WN_write_strtab(Index_To_Str(0), STR_Table_Size(), symtab_file);
+#ifdef KEY
+  if (Mod_Ref_Info_Table_Size() != 0)
+    IPA_write_summary (IPA_irb_write_mod_ref_info, symtab_file);
+#endif
   WN_write_revision(symtab_file);  
 
   add_to_tmp_file_list(symtab_file_name);
@@ -515,7 +525,7 @@ bool output_queue::should_flush(const IPA_NODE* node)
   count += node->Weight ();
 
 #ifdef KEY
-  if (Opt_Options_Inconsistent)
+  if (IPA_Enable_Source_PU_Order || Opt_Options_Inconsistent)
   {
       if (IPA_NODE::next_file_id != -1 &&
           IPA_NODE::next_file_id != node->File_Id())
@@ -532,7 +542,12 @@ bool output_queue::should_flush(const IPA_NODE* node)
   }
 #endif
 
-  if (count >= IPA_Max_Output_File_Size) {
+  if (
+#ifdef KEY
+      // Do not consider output file size if following source code order.
+      !IPA_Enable_Source_PU_Order && !Opt_Options_Inconsistent &&
+#endif
+      count >= IPA_Max_Output_File_Size) {
       if (ProMP_Listing) {
 	ProMP_next_idx = promp_id;
 	promp_id = count;

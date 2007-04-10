@@ -41,9 +41,9 @@
  * ====================================================================
  *
  * Module: cwh_stk
- * $Revision: 1.1.1.1 $
- * $Date: 2005/10/21 19:00:00 $
- * $Author: marcel $
+ * $Revision: 1.6 $
+ * $Date: 04/12/21 14:57:33-08:00 $
+ * $Author: bos@eng-25.internal.keyresearch.com $
  * $Source: 
  *
  * Revision history:
@@ -67,7 +67,7 @@
 static char *source_file = __FILE__;
 
 #ifdef _KEEP_RCS_ID
-static char *rcs_id = "$Source: /proj/osprey/CVS/open64/osprey1.0/crayf90/sgi/cwh_stk.cxx,v $ $Revision: 1.1.1.1 $";
+static char *rcs_id = "$Source: /home/bos/bk/kpro64-pending/crayf90/sgi/SCCS/s.cwh_stk.cxx $ $Revision: 1.6 $";
 #endif /* _KEEP_RCS_ID */
 
 

@@ -80,6 +80,11 @@ endif
 #----------------------------------------------------------------------
 HOSTDEFS += -Dsgi
 HOSTDEFS += -DBACK_END -DMONGOOSE_BE
+
+ifeq ($(BUILD_TARGET), X8664)
+HOSTDEFS += -DCG_PATHSCALE_MERGE
+endif
+
 ifeq ($(BUILD_OS), IRIX)
 HOSTDEFS += -D_LIBELF_XTND_64
 endif
@@ -108,6 +113,12 @@ ifeq ($(BUILD_TARGET), IA64)
 TARGDEFS = -D__MIPS_AND_IA64_ELF_H
 endif
 ifeq ($(BUILD_TARGET), IA32)
+TARGDEFS = -D__MIPS_AND_IA64_ELF_H
+endif
+ifeq ($(BUILD_TARGET), MIPS)
+TARGDEFS = -D__MIPS_AND_IA64_ELF_H
+endif
+ifeq ($(BUILD_TARGET), X8664)
 TARGDEFS = -D__MIPS_AND_IA64_ELF_H
 endif
 
@@ -293,6 +304,12 @@ endif
 ifeq ($(BUILD_TARGET), IA32)
   BE_CG_TARG_CXX_SRCS += stack_fp_regs.cxx
   BE_CG_TARG_CXX_SRCS += exp_longlong.cxx
+endif
+
+ifeq ($(BUILD_TARGET), X8664)
+  BE_CG_TARG_CXX_SRCS += cg_sched.cxx
+  BE_CG_TARG_CXX_SRCS += cg_convert_x87.cxx
+  BE_CG_TARG_CXX_SRCS += cg_misc.cxx
 endif
 
 CG_CXX_PCH_SRCS = 	\

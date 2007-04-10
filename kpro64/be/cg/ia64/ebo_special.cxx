@@ -674,7 +674,6 @@ condition_redundant(OP *elim_op,
     TN *pr1 = OP_result(prev_op,1);
 	EBO_TN_INFO *pr0_tninfo = prev_opinfo->actual_rslt[0];
 	EBO_TN_INFO *pr1_tninfo = prev_opinfo->actual_rslt[1];
-	
     TN *er0 = OP_result(elim_op,0);
     TN *er1 = OP_result(elim_op,1);
     TN *prp = OP_opnd(prev_op,OP_PREDICATE_OPND);
@@ -734,7 +733,6 @@ condition_redundant(OP *elim_op,
 	  save_tn_info = pr0_tninfo;
 	  pr0_tninfo = pr1_tninfo;
 	  pr1_tninfo = save_tn_info;
-
       if (EBO_Trace_Optimization) {
         #pragma mips_frequency_hint NEVER
         fprintf(TFile,"%sCompare instructions are complements.\n",EBO_trace_pfx);
@@ -795,7 +793,7 @@ condition_redundant(OP *elim_op,
       } else {
         goto can_not_combine_ops;
       }
-    }
+    } 
     if (er1 != True_TN) {
       if (pr1 != True_TN && EBO_tn_available(OP_bb(elim_op), pr1_tninfo)) {
         EBO_Copy_Predicate (er1, pr1, &ops);
@@ -1660,7 +1658,7 @@ delete_memory_op (OP *op,
       CGTARG_Is_OP_Check_Load(opinfo->in_op)  ||
       BB_recovery(OP_bb(op))   ||
       BB_recovery(OP_bb(opinfo->in_op)))    return FALSE;
-      
+
   /* ld.fill and st.spill access UNAT, they should not be safely deleted 
    * because currently the EBO does not analyze the UNAT bit.
    */
